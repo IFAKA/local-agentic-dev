@@ -1,20 +1,17 @@
-# Pi Agent Local Setup
+# Pi + Qwen 3.6 Local Setup
 
-Local Ollama-based coding setup for the Pi agent workflow:
+Local setup for the `pi` coding agent using a dedicated `llama-server` endpoint:
 
 - **Machine:** Apple Silicon `Mac16,8`
 - **Memory target:** 48 GB unified memory
-- **Main model alias:** `qwen3.6-27b-reasoning:27b-q6`
-- **Upstream model:** `batiai/qwen3.6-27b:q6`
-- **Quantization:** `Q6_K`
+- **Pi model id:** `qwen3.6-27b-reasoning`
+- **Server:** `http://127.0.0.1:11435/v1`
+- **Model file:** `Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf`
 - **Default context:** `32768`
-- **Tools:** OpenCode and Aider through Ollama's local OpenAI-compatible endpoint
 
-The installer is designed to reuse one shared Ollama model cache across macOS users, so the same 20GB+ model blobs are not downloaded once per account.
+The installer reuses one shared GGUF across macOS users, so the same 21GB model file is not duplicated per account.
 
 ## Install
-
-After these changes are pushed to `main`, run:
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main/install.sh | sh
@@ -28,85 +25,69 @@ For local testing from a clone:
 
 ## Important: First Run
 
-Run the installer first from the macOS user that should own the first download. On this machine the current Ollama cache is:
+Run the installer first from the macOS user that already has the GGUF. On this machine it is currently:
 
 ```sh
-/Users/faka/.ollama/models
+/Users/faka/.ollama-pi-qwen36/Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf
 ```
 
-The installer copies that cache into:
+The installer copies it into shared storage:
 
 ```sh
-/Users/Shared/ollama-models
+/Users/Shared/pi-qwen36/Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf
 ```
 
-If `batiai/qwen3.6-27b:q6` is already in that cache, the installer will create the local `qwen3.6-27b-reasoning:27b-q6` alias without downloading the big blob again.
-
-If Qwen 3.6 is not already installed, the first run downloads `batiai/qwen3.6-27b:q6` once into the shared cache. Then run the installer from the other macOS user. That second user will point Ollama at the same shared cache instead of downloading a duplicate copy.
-
-If Ollama was already running before install, restart Ollama once after install so it picks up:
-
-```sh
-OLLAMA_MODELS=/Users/Shared/ollama-models
-```
+Then run the installer from the other macOS user. That second user will reuse the shared GGUF and create its own per-user Pi config and LaunchAgent.
 
 ## What Gets Installed
 
-- `~/.config/opencode/opencode.json`
-- `~/.aider.conf.yml`
+- `pi` CLI via `@mariozechner/pi-coding-agent`
+- `llama-server` via Homebrew `llama.cpp`
+- `~/Library/LaunchAgents/com.faka.pi-qwen36.plist`
+- `~/.pi/agent/settings.json`
+- `~/.pi/agent/models.json`
 - `~/.config/local-agentic-dev/install-manifest`
-- Shared Ollama cache configuration via `launchctl setenv OLLAMA_MODELS`
 
-Existing OpenCode and Aider configs are backed up before replacement.
+Existing Pi settings and model config are backed up before replacement.
 
 ## Usage
 
 ```sh
-opencode
+pi
 ```
 
-```sh
-aider
+The generated Pi config uses:
+
+```text
+provider: ollama
+model: qwen3.6-27b-reasoning
+baseUrl: http://127.0.0.1:11435/v1
 ```
-
-The generated configs use:
-
-```sh
-qwen3.6-27b-reasoning:27b-q6
-```
-
-as the main model and:
-
-```sh
-llama3.2:3b
-```
-
-as the small helper model.
 
 ## Options
 
-Use a different shared model cache:
+Use a different shared model directory:
 
 ```sh
-OLLAMA_MODELS_DIR=/Volumes/FastSSD/ollama-models ./install.sh
+PI_SHARED_DIR=/Volumes/FastSSD/pi-qwen36 ./install.sh
 ```
 
-Use a different local model name:
+Use a different model id:
 
 ```sh
-PI_AGENT_MODEL=qwen3.6-reasoning:27b-q6 ./install.sh
+PI_MODEL_ID=qwen3.6-27b-reasoning ./install.sh
 ```
 
-Use a different pullable upstream model:
+Download the GGUF once if it is not already present locally:
 
 ```sh
-PI_AGENT_UPSTREAM_MODEL=batiai/qwen3.6-27b:q6 ./install.sh
+PI_GGUF_URL=https://example.com/model.gguf ./install.sh
 ```
 
 Use a larger context only if you have tested memory pressure:
 
 ```sh
-PI_AGENT_CONTEXT=65536 ./install.sh
+PI_CONTEXT=65536 ./install.sh
 ```
 
 The default stays at `32768` because it is conservative for a 27B Q6 model on a 48 GB Mac.
@@ -117,4 +98,4 @@ The default stays at `32768` because it is conservative for a 27B Q6 model on a 
 ./uninstall.sh
 ```
 
-Uninstall removes generated configs and restores backups, but it keeps shared Ollama models by default so another macOS user is not broken.
+Uninstall removes generated configs and restores backups, but it keeps the shared GGUF by default so another macOS user is not broken.

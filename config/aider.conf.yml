@@ -1,5 +1,0 @@
-model: ollama_chat/__PI_AGENT_MODEL__
-weak-model: ollama_chat/__PI_AGENT_SMALL_MODEL__
-editor-model: ollama_chat/__PI_AGENT_MODEL__
-auto-commits: false
-analytics: false
