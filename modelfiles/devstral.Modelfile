@@ -1,3 +1,0 @@
-FROM devstral-small-2:latest
-PARAMETER num_ctx 131072
-PARAMETER temperature 0.15

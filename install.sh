@@ -1,135 +1,170 @@
 #!/bin/sh
-# install.sh — local-agentic-dev (Frontier Edition 2026)
+# install.sh — Pi agent local setup for Ollama + OpenCode + Aider
 # curl -sSL https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main/install.sh | sh
 set -eu
 
-# ---------------------------------------------------------------------------
-# Color helpers
-# ---------------------------------------------------------------------------
 info() { printf '[info]  %s\n' "$*"; }
 ok()   { printf '[ ok ]  %s\n' "$*"; }
 warn() { printf '[warn]  %s\n' "$*"; }
 die()  { printf '[fail]  %s\n' "$*" >&2; exit 1; }
 
-# ---------------------------------------------------------------------------
-# Manifest helpers
-# ---------------------------------------------------------------------------
-MANIFEST_DIR="$HOME/.config/opencode"
-MANIFEST="$MANIFEST_DIR/.install-manifest"
-
-manifest_set() {
-  _ms_key="$1"; _ms_val="$2"
-  mkdir -p "$MANIFEST_DIR"
-  if [ -f "$MANIFEST" ] && grep -q "^${_ms_key}=" "$MANIFEST"; then
-    _ms_tmp=$(mktemp)
-    grep -v "^${_ms_key}=" "$MANIFEST" > "$_ms_tmp"
-    printf '%s=%s\n' "$_ms_key" "$_ms_val" >> "$_ms_tmp"
-    mv "$_ms_tmp" "$MANIFEST"
-  else
-    printf '%s=%s\n' "$_ms_key" "$_ms_val" >> "$MANIFEST"
-  fi
-}
-
-# ---------------------------------------------------------------------------
-# Modelfile fetching helper
-# ---------------------------------------------------------------------------
 RAW_BASE="https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main"
+SHARED_MODELS_DIR="${OLLAMA_MODELS_DIR:-/Users/Shared/ollama-models}"
+OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
+PI_AGENT_MODEL="${PI_AGENT_MODEL:-qwen35-reasoning:27b-q6}"
+PI_AGENT_UPSTREAM_MODEL="${PI_AGENT_UPSTREAM_MODEL:-}"
+PI_AGENT_CONTEXT="${PI_AGENT_CONTEXT:-32768}"
+PI_AGENT_SMALL_MODEL="${PI_AGENT_SMALL_MODEL:-llama3.2:3b}"
+
+MANIFEST_DIR="$HOME/.config/local-agentic-dev"
+MANIFEST="$MANIFEST_DIR/install-manifest"
+OPENCODE_DIR="$HOME/.config/opencode"
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT INT TERM
-
-get_modelfile() {
-  _gm_name="$1"; _gm_dest="$2"
-  if [ -n "${REPO_DIR:-}" ] && [ -f "$REPO_DIR/modelfiles/$_gm_name" ]; then
-    cp "$REPO_DIR/modelfiles/$_gm_name" "$_gm_dest"
-  else
-    curl -fsSL "${RAW_BASE}/modelfiles/${_gm_name}" -o "$_gm_dest"
-  fi
-}
 
 REPO_DIR=""
 case "$0" in */install.sh) REPO_DIR="$(cd "$(dirname "$0")" && pwd)" ;; esac
 
-# ---------------------------------------------------------------------------
-# Step 1 — Platform & RAM check
-# ---------------------------------------------------------------------------
-info "Checking hardware..."
+manifest_set() {
+  _key="$1"; _value="$2"
+  mkdir -p "$MANIFEST_DIR"
+  if [ -f "$MANIFEST" ] && grep -q "^${_key}=" "$MANIFEST"; then
+    _tmp=$(mktemp)
+    grep -v "^${_key}=" "$MANIFEST" > "$_tmp"
+    printf '%s=%s\n' "$_key" "$_value" >> "$_tmp"
+    mv "$_tmp" "$MANIFEST"
+  else
+    printf '%s=%s\n' "$_key" "$_value" >> "$MANIFEST"
+  fi
+}
+
+fetch_config() {
+  _name="$1"; _dest="$2"
+  if [ -n "$REPO_DIR" ] && [ -f "$REPO_DIR/config/$_name" ]; then
+    cp "$REPO_DIR/config/$_name" "$_dest"
+  else
+    curl -fsSL "$RAW_BASE/config/$_name" -o "$_dest"
+  fi
+}
+
+install_template() {
+  _src="$1"; _dest="$2"
+  _tmp="$TMP_DIR/$(basename "$_dest").tmp"
+  fetch_config "$_src" "$_tmp"
+  sed \
+    -e "s|__PI_AGENT_MODEL__|$PI_AGENT_MODEL|g" \
+    -e "s|__PI_AGENT_SMALL_MODEL__|$PI_AGENT_SMALL_MODEL|g" \
+    -e "s|__PI_AGENT_CONTEXT__|$PI_AGENT_CONTEXT|g" \
+    "$_tmp" > "$_dest"
+}
+
+model_exists() {
+  ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "$1"
+}
+
+info "Checking platform..."
 [ "$(uname -s)" = "Darwin" ] || die "macOS required."
-[ "$(uname -m)" = "arm64" ]  || die "Apple Silicon (arm64) required."
+[ "$(uname -m)" = "arm64" ] || die "Apple Silicon required."
 
-TOTAL_RAM=$(sysctl hw.memsize | awk '{print $2 / 1024 / 1024 / 1024}')
-info "Detected ${TOTAL_RAM}GB Unified Memory."
-
-if [ "${TOTAL_RAM%.*}" -ge 32 ]; then
-  MODE="frontier"
-  info "Configuring for Frontier Mode (32GB+ RAM)..."
-else
-  MODE="standard"
-  info "Configuring for Standard Mode (<32GB RAM)..."
+TOTAL_RAM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || printf '0')
+TOTAL_RAM_GB=$((TOTAL_RAM_BYTES / 1024 / 1024 / 1024))
+info "Detected ${TOTAL_RAM_GB}GB unified memory."
+if [ "$TOTAL_RAM_GB" -lt 32 ]; then
+  warn "This setup targets 32GB+ Macs. Your model may be slow or fail under memory pressure."
 fi
 
-# ---------------------------------------------------------------------------
-# Step 2 & 3 — Homebrew & Ollama
-# ---------------------------------------------------------------------------
+info "Configuring shared Ollama model cache: $SHARED_MODELS_DIR"
+mkdir -p "$SHARED_MODELS_DIR"
+chmod 775 "$SHARED_MODELS_DIR" 2>/dev/null || true
+
+if [ -d "$HOME/.ollama/models" ] && [ "$HOME/.ollama/models" != "$SHARED_MODELS_DIR" ]; then
+  if [ ! -d "$SHARED_MODELS_DIR/blobs" ] && [ ! -d "$SHARED_MODELS_DIR/manifests" ]; then
+    info "Copying existing Ollama models from ~/.ollama/models into the shared cache..."
+    cp -R "$HOME/.ollama/models/." "$SHARED_MODELS_DIR/"
+    chmod -R g+rwX "$SHARED_MODELS_DIR" 2>/dev/null || true
+    ok "Copied existing model cache."
+  else
+    info "Shared cache already contains Ollama model data."
+  fi
+fi
+
+launchctl setenv OLLAMA_MODELS "$SHARED_MODELS_DIR" 2>/dev/null || true
+export OLLAMA_MODELS="$SHARED_MODELS_DIR"
+manifest_set ollama_models_dir "$SHARED_MODELS_DIR"
+manifest_set pi_agent_model "$PI_AGENT_MODEL"
+manifest_set pi_agent_context "$PI_AGENT_CONTEXT"
+
 command -v brew >/dev/null 2>&1 || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 command -v ollama >/dev/null 2>&1 || brew install ollama
 
-# Ensure Ollama is running
-if ! curl -sf http://localhost:11434/ >/dev/null 2>&1; then
-  warn "Starting Ollama..."
-  ollama serve >/dev/null 2>&1 &
-  sleep 5
-fi
-
-# ---------------------------------------------------------------------------
-# Step 4 — Pull Base Models
-# ---------------------------------------------------------------------------
-if [ "$MODE" = "frontier" ]; then
-  info "Pulling Q6_K high-precision models..."
-  ollama pull qwen3-coder:32b-instruct-q6_K
-  ollama pull deepseek-r1:32b-q6_K
+if ! curl -sf "$OLLAMA_HOST/" >/dev/null 2>&1; then
+  info "Starting Ollama with shared model cache..."
+  OLLAMA_MODELS="$SHARED_MODELS_DIR" ollama serve >/dev/null 2>&1 &
+  _timeout=20
+  while ! curl -sf "$OLLAMA_HOST/" >/dev/null 2>&1; do
+    sleep 1
+    _timeout=$((_timeout - 1))
+    [ "$_timeout" -gt 0 ] || die "Ollama did not start within 20 seconds."
+  done
 else
-  info "Pulling 14B models..."
-  ollama pull qwen3-coder:14b
+  warn "Ollama is already running. Restart Ollama after install so it uses $SHARED_MODELS_DIR."
 fi
-ollama pull llama3.2:3b
 
-# ---------------------------------------------------------------------------
-# Step 5 — Create model variants
-# ---------------------------------------------------------------------------
-create_variant() {
-  _cv_variant="$1"; _cv_mf="$2"
-  info "Creating variant: $_cv_variant ..."
-  _cv_dest="$TMP_DIR/$_cv_mf"
-  get_modelfile "$_cv_mf" "$_cv_dest"
-  ollama create "$_cv_variant" -f "$_cv_dest"
-}
-
-if [ "$MODE" = "frontier" ]; then
-  create_variant "qwen3-coder:32b-q6_K" "qwen3-coder-32b-q6_K.modelfile"
-  create_variant "deepseek-r1:32b-q6_K" "deepseek-r1-32b-q6_K.modelfile"
+info "Checking Pi agent model: $PI_AGENT_MODEL"
+if model_exists "$PI_AGENT_MODEL"; then
+  ok "$PI_AGENT_MODEL is available."
+elif [ -n "$PI_AGENT_UPSTREAM_MODEL" ]; then
+  warn "$PI_AGENT_MODEL not found. Pulling fallback upstream model: $PI_AGENT_UPSTREAM_MODEL"
+  ollama pull "$PI_AGENT_UPSTREAM_MODEL"
+  if [ "$PI_AGENT_UPSTREAM_MODEL" != "$PI_AGENT_MODEL" ]; then
+    warn "Using fallback model name in generated configs: $PI_AGENT_UPSTREAM_MODEL"
+    PI_AGENT_MODEL="$PI_AGENT_UPSTREAM_MODEL"
+    manifest_set pi_agent_model "$PI_AGENT_MODEL"
+  fi
 else
-  create_variant "qwen3-coder:14b-128k" "qwen3-coder.modelfile"
+  die "$PI_AGENT_MODEL was not found. Run this installer first from the user that already has the model, or set PI_AGENT_UPSTREAM_MODEL to a pullable Ollama model."
 fi
-create_variant "llama3.2:3b-32k" "llama32.modelfile"
 
-# ---------------------------------------------------------------------------
-# Step 6 — Tools
-# ---------------------------------------------------------------------------
+if ! model_exists "$PI_AGENT_SMALL_MODEL"; then
+  info "Pulling small helper model: $PI_AGENT_SMALL_MODEL"
+  ollama pull "$PI_AGENT_SMALL_MODEL"
+fi
+
 info "Installing tools..."
 command -v node >/dev/null 2>&1 || brew install node
-command -v opencode >/dev/null 2>&1 || npm install -g opencode-ai
+if command -v opencode >/dev/null 2>&1; then
+  manifest_set installed_opencode false
+else
+  npm install -g opencode-ai
+  manifest_set installed_opencode true
+fi
 command -v aider >/dev/null 2>&1 || brew install aider
 
-# ---------------------------------------------------------------------------
-# Step 7 — Summary
-# ---------------------------------------------------------------------------
-printf '\n================================================\n'
-printf '  local-agentic-dev: Install Complete (%s)\n' "$MODE"
-printf '================================================\n\n'
-if [ "$MODE" = "frontier" ]; then
-  printf '  Primary model : qwen3-coder:32b-q6_K\n'
-  printf '  Architect     : deepseek-r1:32b-q6_K\n'
-else
-  printf '  Primary model : qwen3-coder:14b-128k\n'
+info "Installing OpenCode config..."
+mkdir -p "$OPENCODE_DIR"
+OPENCODE_CFG="$OPENCODE_DIR/opencode.json"
+if [ -f "$OPENCODE_CFG" ] && [ ! -f "$OPENCODE_CFG.pre-local-agentic-dev" ]; then
+  cp "$OPENCODE_CFG" "$OPENCODE_CFG.pre-local-agentic-dev"
+  ok "Backed up existing OpenCode config."
 fi
+install_template "opencode.json" "$OPENCODE_CFG"
+manifest_set installed_opencode_config true
+
+info "Installing Aider config..."
+AIDER_CFG="$HOME/.aider.conf.yml"
+if [ -f "$AIDER_CFG" ] && [ ! -f "$AIDER_CFG.pre-local-agentic-dev" ]; then
+  cp "$AIDER_CFG" "$AIDER_CFG.pre-local-agentic-dev"
+  ok "Backed up existing Aider config."
+fi
+install_template "aider.conf.yml" "$AIDER_CFG"
+manifest_set installed_aider_config true
+
+printf '\n================================================\n'
+printf '  Pi Agent Local Setup Complete\n'
+printf '================================================\n\n'
+printf '  Model cache : %s\n' "$SHARED_MODELS_DIR"
+printf '  Main model  : %s\n' "$PI_AGENT_MODEL"
+printf '  Context     : %s\n' "$PI_AGENT_CONTEXT"
+printf '  Small model : %s\n\n' "$PI_AGENT_SMALL_MODEL"
+printf '  Restart Ollama if it was already running before this install.\n'
 printf '  Usage: cd /your/project && opencode\n\n'

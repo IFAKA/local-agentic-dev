@@ -1,58 +1,117 @@
-# 🚀 Local Agentic Dev (2026 "Efficient Frontier" Setup)
+# Pi Agent Local Setup
 
-A high-performance, **100% local**, and free agentic coding setup optimized for Apple Silicon (M4 Pro/Max). Achieve "Claude Opus" level reasoning without API costs or data leaks.
+Local Ollama-based coding setup for the Pi agent workflow currently used on this Mac:
 
-## 📊 The "Efficient Frontier" Research (March 2026)
+- **Machine:** Apple Silicon `Mac16,8`
+- **Memory target:** 48 GB unified memory
+- **Main model:** `qwen35-reasoning:27b-q6`
+- **Quantization:** `Q6_K`
+- **Default context:** `32768`
+- **Tools:** OpenCode and Aider through Ollama's local OpenAI-compatible endpoint
 
-This setup is based on quantitative research for the **Mac16,8 (M4 Pro)** architecture:
-- **Bandwidth Utilization:** Maximizes the 273 GB/s bandwidth of the M4 Pro.
-- **RAM Optimization:** Specifically tuned for **48GB Unified Memory** setups.
-- **Intelligence Frontier:** Uses **Q6_K (6-bit)** quantization—the mathematical "sweet spot" where you get 98% of FP16 reasoning with 50% less RAM usage.
+The installer is designed to reuse one shared Ollama model cache across macOS users, so the same 20GB+ model blobs are not downloaded once per account.
 
-### Benchmarks (M4 Pro @ 48GB)
-| Model | Param | Quant | Context | Speed (TPS) |
-|-------|-------|-------|---------|-------------|
-| **Qwen-3-Coder** | 32B | **Q6_K** | 131K | **~22 t/s** |
-| **DeepSeek-R1** | 32B | **Q6_K** | 65K | **~20 t/s** |
+## Install
 
----
+After these changes are pushed to `main`, run:
 
-## 🛠️ Components
-- **Inference:** [Ollama](https://ollama.com) (Local Llama.cpp backend)
-- **Agent:** [OpenCode](https://github.com/anomalyco/opencode) (Autonomous Architect)
-- **Pair-Programmer:** [Aider](https://aider.chat) (Surgical Edits)
-- **Context:** [MCP](https://modelcontextprotocol.io) (Model Context Protocol support)
-
-## 📥 Install
-Run the hardware-aware installer:
 ```sh
 curl -sSL https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main/install.sh | sh
 ```
 
-## 🚀 Usage
-### 1. Autonomous Building (The "Big Guy" Workflow)
+For local testing from a clone:
+
 ```sh
-opencode --model qwen3-coder:32b-q6_K
+./install.sh
 ```
-*Best for: Starting projects from zero, adding large features, 10+ file edits.*
 
-### 2. Surgical Pair-Programming
+## Important: First Run
+
+Run the installer first from the macOS user that already has the model installed. On this machine that model cache is currently:
+
 ```sh
-aider --model ollama/qwen3-coder:32b-q6_K
+/Users/faka/.ollama/models
 ```
-*Best for: Fast bug fixes, refactoring specific functions, line-by-line help.*
 
-### 3. Complex Debugging (The "Architect" Loop)
+The installer copies that cache into:
+
 ```sh
-aider --model ollama/deepseek-r1:32b-q6_K
+/Users/Shared/ollama-models
 ```
-*Best for: When you have a logic bug that standard models can't solve. Uses Chain-of-Thought.*
 
-## ⚙️ Configuration
-The installer automatically configures:
-- **~/.config/opencode/opencode.json**: Points to your local 32B models.
-- **~/.aider.conf.yml**: Optimized for local Ollama endpoints.
-- **128K Context Window**: Pre-configured in the Modelfiles.
+Then run the installer from the other macOS user. That second user will point Ollama at the same shared cache instead of downloading duplicate model blobs.
 
----
-**Maintained by IFAKA** | *Part of the 2026 Local LLM Initiative*
+If Ollama was already running before install, restart Ollama once after install so it picks up:
+
+```sh
+OLLAMA_MODELS=/Users/Shared/ollama-models
+```
+
+## What Gets Installed
+
+- `~/.config/opencode/opencode.json`
+- `~/.aider.conf.yml`
+- `~/.config/local-agentic-dev/install-manifest`
+- Shared Ollama cache configuration via `launchctl setenv OLLAMA_MODELS`
+
+Existing OpenCode and Aider configs are backed up before replacement.
+
+## Usage
+
+```sh
+opencode
+```
+
+```sh
+aider
+```
+
+The generated configs use:
+
+```sh
+qwen35-reasoning:27b-q6
+```
+
+as the main model and:
+
+```sh
+llama3.2:3b
+```
+
+as the small helper model.
+
+## Options
+
+Use a different shared model cache:
+
+```sh
+OLLAMA_MODELS_DIR=/Volumes/FastSSD/ollama-models ./install.sh
+```
+
+Use a different local model name:
+
+```sh
+PI_AGENT_MODEL=qwen3.6-reasoning:27b-q6 ./install.sh
+```
+
+Use a pullable upstream fallback if the local model does not already exist:
+
+```sh
+PI_AGENT_UPSTREAM_MODEL=batiai/qwen3.6-27b:q6 ./install.sh
+```
+
+Use a larger context only if you have tested memory pressure:
+
+```sh
+PI_AGENT_CONTEXT=65536 ./install.sh
+```
+
+The default stays at `32768` because that is the current working model configuration on this 48 GB Mac.
+
+## Uninstall
+
+```sh
+./uninstall.sh
+```
+
+Uninstall removes generated configs and restores backups, but it keeps shared Ollama models by default so another macOS user is not broken.
