@@ -11,8 +11,8 @@ die()  { printf '[fail]  %s\n' "$*" >&2; exit 1; }
 RAW_BASE="https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main"
 SHARED_MODELS_DIR="${OLLAMA_MODELS_DIR:-/Users/Shared/ollama-models}"
 OLLAMA_HOST="${OLLAMA_HOST:-http://localhost:11434}"
-PI_AGENT_MODEL="${PI_AGENT_MODEL:-qwen35-reasoning:27b-q6}"
-PI_AGENT_UPSTREAM_MODEL="${PI_AGENT_UPSTREAM_MODEL:-}"
+PI_AGENT_MODEL="${PI_AGENT_MODEL:-qwen3.6-27b-reasoning:27b-q6}"
+PI_AGENT_UPSTREAM_MODEL="${PI_AGENT_UPSTREAM_MODEL:-batiai/qwen3.6-27b:q6}"
 PI_AGENT_CONTEXT="${PI_AGENT_CONTEXT:-32768}"
 PI_AGENT_SMALL_MODEL="${PI_AGENT_SMALL_MODEL:-llama3.2:3b}"
 
@@ -59,7 +59,23 @@ install_template() {
 }
 
 model_exists() {
-  ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -qx "$1"
+  ollama list 2>/dev/null | awk 'NR > 1 {print $1}' | grep -Fxq "$1"
+}
+
+create_pi_agent_model() {
+  _modelfile="$TMP_DIR/pi-agent.Modelfile"
+  cat > "$_modelfile" <<EOF
+FROM $PI_AGENT_UPSTREAM_MODEL
+PARAMETER num_ctx $PI_AGENT_CONTEXT
+PARAMETER temperature 0.6
+PARAMETER top_k 20
+PARAMETER top_p 0.95
+PARAMETER repeat_penalty 1.05
+PARAMETER min_p 0
+
+SYSTEM "You are a reasoning-focused local coding agent. Be concise and direct. Think deeply before answering complex software engineering questions. Use tools when they materially improve correctness."
+EOF
+  ollama create "$PI_AGENT_MODEL" -f "$_modelfile"
 }
 
 info "Checking platform..."
@@ -113,16 +129,15 @@ fi
 info "Checking Pi agent model: $PI_AGENT_MODEL"
 if model_exists "$PI_AGENT_MODEL"; then
   ok "$PI_AGENT_MODEL is available."
+elif model_exists "$PI_AGENT_UPSTREAM_MODEL"; then
+  info "Creating $PI_AGENT_MODEL from existing upstream model $PI_AGENT_UPSTREAM_MODEL ..."
+  create_pi_agent_model
 elif [ -n "$PI_AGENT_UPSTREAM_MODEL" ]; then
-  warn "$PI_AGENT_MODEL not found. Pulling fallback upstream model: $PI_AGENT_UPSTREAM_MODEL"
+  warn "$PI_AGENT_MODEL not found. Pulling upstream model once: $PI_AGENT_UPSTREAM_MODEL"
   ollama pull "$PI_AGENT_UPSTREAM_MODEL"
-  if [ "$PI_AGENT_UPSTREAM_MODEL" != "$PI_AGENT_MODEL" ]; then
-    warn "Using fallback model name in generated configs: $PI_AGENT_UPSTREAM_MODEL"
-    PI_AGENT_MODEL="$PI_AGENT_UPSTREAM_MODEL"
-    manifest_set pi_agent_model "$PI_AGENT_MODEL"
-  fi
+  create_pi_agent_model
 else
-  die "$PI_AGENT_MODEL was not found. Run this installer first from the user that already has the model, or set PI_AGENT_UPSTREAM_MODEL to a pullable Ollama model."
+  die "$PI_AGENT_MODEL was not found and PI_AGENT_UPSTREAM_MODEL is empty."
 fi
 
 if ! model_exists "$PI_AGENT_SMALL_MODEL"; then

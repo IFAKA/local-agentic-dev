@@ -1,10 +1,11 @@
 # Pi Agent Local Setup
 
-Local Ollama-based coding setup for the Pi agent workflow currently used on this Mac:
+Local Ollama-based coding setup for the Pi agent workflow:
 
 - **Machine:** Apple Silicon `Mac16,8`
 - **Memory target:** 48 GB unified memory
-- **Main model:** `qwen35-reasoning:27b-q6`
+- **Main model alias:** `qwen3.6-27b-reasoning:27b-q6`
+- **Upstream model:** `batiai/qwen3.6-27b:q6`
 - **Quantization:** `Q6_K`
 - **Default context:** `32768`
 - **Tools:** OpenCode and Aider through Ollama's local OpenAI-compatible endpoint
@@ -27,7 +28,7 @@ For local testing from a clone:
 
 ## Important: First Run
 
-Run the installer first from the macOS user that already has the model installed. On this machine that model cache is currently:
+Run the installer first from the macOS user that should own the first download. On this machine the current Ollama cache is:
 
 ```sh
 /Users/faka/.ollama/models
@@ -39,7 +40,9 @@ The installer copies that cache into:
 /Users/Shared/ollama-models
 ```
 
-Then run the installer from the other macOS user. That second user will point Ollama at the same shared cache instead of downloading duplicate model blobs.
+If `batiai/qwen3.6-27b:q6` is already in that cache, the installer will create the local `qwen3.6-27b-reasoning:27b-q6` alias without downloading the big blob again.
+
+If Qwen 3.6 is not already installed, the first run downloads `batiai/qwen3.6-27b:q6` once into the shared cache. Then run the installer from the other macOS user. That second user will point Ollama at the same shared cache instead of downloading a duplicate copy.
 
 If Ollama was already running before install, restart Ollama once after install so it picks up:
 
@@ -69,7 +72,7 @@ aider
 The generated configs use:
 
 ```sh
-qwen35-reasoning:27b-q6
+qwen3.6-27b-reasoning:27b-q6
 ```
 
 as the main model and:
@@ -94,7 +97,7 @@ Use a different local model name:
 PI_AGENT_MODEL=qwen3.6-reasoning:27b-q6 ./install.sh
 ```
 
-Use a pullable upstream fallback if the local model does not already exist:
+Use a different pullable upstream model:
 
 ```sh
 PI_AGENT_UPSTREAM_MODEL=batiai/qwen3.6-27b:q6 ./install.sh
@@ -106,7 +109,7 @@ Use a larger context only if you have tested memory pressure:
 PI_AGENT_CONTEXT=65536 ./install.sh
 ```
 
-The default stays at `32768` because that is the current working model configuration on this 48 GB Mac.
+The default stays at `32768` because it is conservative for a 27B Q6 model on a 48 GB Mac.
 
 ## Uninstall
 
