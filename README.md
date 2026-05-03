@@ -9,7 +9,7 @@ Local setup for the `pi` coding agent using a dedicated `llama-server` endpoint:
 - **Model file:** `Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf`
 - **Default context:** `32768`
 
-The installer reuses one shared GGUF across macOS users, so the same 21GB model file is not duplicated per account.
+The installer reuses one shared GGUF across macOS users, so the same 21GB model file is not duplicated per account. It also disables the older `ollama.custom` LaunchAgent if present, because that legacy service starts a second `llama-server` on the same port.
 
 ## Install
 
@@ -46,6 +46,8 @@ Then run the installer from the other macOS user. That second user will reuse th
 - `~/Library/LaunchAgents/com.faka.pi-qwen36.plist`
 - `~/.pi/agent/settings.json`
 - `~/.pi/agent/models.json`
+- `~/.pi/agent/prompts/{plan,implement,review,fix-failures}.md`
+- `~/.pi/agent/skills/local-agentic-dev/SKILL.md`
 - `~/.config/local-agentic-dev/install-manifest`
 
 Existing Pi settings and model config are backed up before replacement.
@@ -59,9 +61,12 @@ pi
 The generated Pi config uses:
 
 ```text
-provider: ollama
+provider: llama-cpp
 model: qwen3.6-27b-reasoning
 baseUrl: http://127.0.0.1:11435/v1
+contextWindow: 32768
+maxTokens: 8192
+parallelSlots: 1
 ```
 
 ## Options
@@ -84,6 +89,15 @@ Download the GGUF once if it is not already present locally:
 PI_GGUF_URL=https://example.com/model.gguf ./install.sh
 ```
 
+Tune for another machine:
+
+```sh
+PI_CONTEXT=16384 PI_PARALLEL=1 ./install.sh   # 24-32 GB machines
+PI_CONTEXT=32768 PI_PARALLEL=1 ./install.sh   # 48 GB default
+PI_CONTEXT=65536 PI_PARALLEL=1 ./install.sh   # 64 GB+ after testing
+PI_DISABLE_LEGACY_AGENTS=false ./install.sh    # keep old LaunchAgents if you manage ports yourself
+```
+
 Use a larger context only if you have tested memory pressure:
 
 ```sh
@@ -99,3 +113,27 @@ The default stays at `32768` because it is conservative for a 27B Q6 model on a 
 ```
 
 Uninstall removes generated configs and restores backups, but it keeps the shared GGUF by default so another macOS user is not broken.
+
+## Device Tuning Notes
+
+The installer is tuned for a 48 GB Apple Silicon Mac by default: Qwen 3.6 27B Q6, 32K context, 8K max output, and one llama.cpp server slot (`-np 1`). One slot is intentional for local coding because parallel slots multiply KV-cache pressure without helping a single Pi session.
+
+For local Qwen-compatible servers, the generated Pi config uses `thinkingFormat: "qwen-chat-template"` and disables OpenAI-style `reasoning_effort`. This matches Pi's current compatibility guidance for local OpenAI-compatible endpoints.
+
+## Benchmarking The Frontier
+
+The installer default is a hypothesis, not proof. To measure the device-specific frontier, run:
+
+```sh
+scripts/benchmark-frontier.py --runs 3
+```
+
+The benchmark writes JSONL and CSV files under `bench/results/`. Compare profiles by changing one variable at a time:
+
+```sh
+PI_CONTEXT=16384 ./install.sh && scripts/benchmark-frontier.py --runs 3
+PI_CONTEXT=32768 ./install.sh && scripts/benchmark-frontier.py --runs 3
+PI_CONTEXT=65536 ./install.sh && scripts/benchmark-frontier.py --runs 3
+```
+
+For quant sweeps, install the same model family at Q4/Q5/Q6/Q8 or IQ variants, rerun the installer with `PI_MODEL_FILE=...`, and compare pass rate, median latency, prompt tok/s, decode tok/s, context, slots, and memory pressure. A profile is on the efficient frontier only if no other tested profile is both faster/lighter and at least as reliable on the same prompts and project tasks.
