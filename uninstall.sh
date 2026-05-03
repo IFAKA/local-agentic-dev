@@ -1,5 +1,5 @@
 #!/bin/sh
-# uninstall.sh — Pi + Qwen 3.6 local coding agent
+# uninstall.sh - Aider + Qwen 3.6 local coding agent
 set -eu
 
 info() { printf '[info]  %s\n' "$*"; }
@@ -21,6 +21,10 @@ manifest_get() {
 PI_LAUNCH_AGENT="$(manifest_get pi_launch_agent)"
 PI_AGENT_DIR="$(manifest_get pi_agent_dir)"
 PI_MODEL_FILE="$(manifest_get pi_model_file)"
+AIDER_CONFIG="$(manifest_get aider_config)"
+AIDER_ENV="$(manifest_get aider_env)"
+AIDER_WRAPPER="$(manifest_get aider_wrapper)"
+HOME_AIDER_CONFIG="$(manifest_get home_aider_config)"
 PI_LAUNCH_LABEL="${PI_LAUNCH_LABEL:-com.faka.pi-qwen36}"
 
 info "Stopping launch agent..."
@@ -32,8 +36,30 @@ else
   launchctl bootout "gui/$(id -u)/$PI_LAUNCH_LABEL" >/dev/null 2>&1 || true
 fi
 
+if [ -n "$AIDER_WRAPPER" ] && [ -f "$AIDER_WRAPPER" ]; then
+  info "Removing Aider wrapper..."
+  rm -f "$AIDER_WRAPPER"
+fi
+
+if [ -n "$AIDER_CONFIG" ] && [ -f "$AIDER_CONFIG" ]; then
+  info "Removing Aider config..."
+  rm -f "$AIDER_CONFIG"
+fi
+if [ -n "$AIDER_ENV" ] && [ -f "$AIDER_ENV" ]; then
+  rm -f "$AIDER_ENV"
+fi
+if [ "$(manifest_get wrote_home_aider_config)" = "true" ] && [ -n "$HOME_AIDER_CONFIG" ]; then
+  if [ -f "$HOME_AIDER_CONFIG" ]; then
+    cp "$HOME_AIDER_CONFIG" "$HOME/aider-conf.backup.yml"
+    rm -f "$HOME_AIDER_CONFIG"
+  fi
+  if [ -f "$HOME/.aider.conf.yml.pre-local-agentic-dev" ]; then
+    mv "$HOME/.aider.conf.yml.pre-local-agentic-dev" "$HOME/.aider.conf.yml"
+  fi
+fi
+
 if [ -n "$PI_AGENT_DIR" ]; then
-  info "Restoring Pi config backups..."
+  info "Restoring old Pi config backups if present..."
   if [ -f "$PI_AGENT_DIR/settings.json" ]; then
     cp "$PI_AGENT_DIR/settings.json" "$HOME/pi-settings.backup.json"
     rm -f "$PI_AGENT_DIR/settings.json"
@@ -62,5 +88,5 @@ rm -f "$MANIFEST"
 rmdir "$MANIFEST_DIR" 2>/dev/null || true
 
 printf '\n================================================\n'
-printf '  Pi Local Setup Removed\n'
+printf '  Aider Local Setup Removed\n'
 printf '================================================\n\n'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark a local Pi/llama.cpp endpoint for device-specific frontier data.
+"""Benchmark a local Aider/llama.cpp endpoint for device-specific frontier data.
 
 This intentionally uses only the Python standard library so the installer remains
 portable. It measures endpoint metadata, prompt/decode throughput, latency, and
@@ -89,7 +89,7 @@ def percentile(values: list[float], p: float) -> float:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Benchmark local Pi/llama.cpp endpoint")
+    parser = argparse.ArgumentParser(description="Benchmark local Aider/llama.cpp endpoint")
     parser.add_argument("--base-url", default=os.environ.get("PI_BENCH_BASE_URL", "http://127.0.0.1:11435"))
     parser.add_argument("--model", default=os.environ.get("PI_BENCH_MODEL", "qwen3.6-27b-reasoning"))
     parser.add_argument("--runs", type=int, default=int(os.environ.get("PI_BENCH_RUNS", "3")))

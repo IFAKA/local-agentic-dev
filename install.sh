@@ -1,5 +1,5 @@
 #!/bin/sh
-# install.sh — Pi + Qwen 3.6 local coding agent
+# install.sh - Aider + Qwen 3.6 local coding agent
 # curl -sSL https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main/install.sh | sh
 set -eu
 
@@ -8,6 +8,13 @@ ok()   { printf '[ ok ]  %s\n' "$*"; }
 warn() { printf '[warn]  %s\n' "$*"; }
 die()  { printf '[fail]  %s\n' "$*" >&2; exit 1; }
 
+LOCAL_AGENT_HARNESS="${LOCAL_AGENT_HARNESS:-aider}"
+LOCAL_AGENT_BIN_DIR="${LOCAL_AGENT_BIN_DIR:-$HOME/.local/bin}"
+LOCAL_AGENT_CONFIG_DIR="${LOCAL_AGENT_CONFIG_DIR:-$HOME/.config/local-agentic-dev}"
+LOCAL_AGENT_WRAPPER="${LOCAL_AGENT_WRAPPER:-local-code}"
+LOCAL_AGENT_REMOVE_PI="${LOCAL_AGENT_REMOVE_PI:-true}"
+LOCAL_AGENT_WRITE_HOME_AIDER_CONFIG="${LOCAL_AGENT_WRITE_HOME_AIDER_CONFIG:-true}"
+LOCAL_AGENT_REASONING="${LOCAL_AGENT_REASONING:-off}"
 PI_MODEL_ID="${PI_MODEL_ID:-qwen3.6-27b-reasoning}"
 PI_MODEL_FILE="${PI_MODEL_FILE:-Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf}"
 PI_CONTEXT="${PI_CONTEXT:-32768}"
@@ -23,11 +30,14 @@ PI_SHARED_DIR="${PI_SHARED_DIR:-/Users/Shared/pi-qwen36}"
 PI_LOCAL_MODEL_DIR="${PI_LOCAL_MODEL_DIR:-$HOME/.ollama-pi-qwen36}"
 PI_GGUF_URL="${PI_GGUF_URL:-}"
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+AIDER_CONFIG_FILE="$LOCAL_AGENT_CONFIG_DIR/aider.conf.yml"
+AIDER_ENV_FILE="$LOCAL_AGENT_CONFIG_DIR/aider.env"
+AIDER_WRAPPER_PATH="$LOCAL_AGENT_BIN_DIR/$LOCAL_AGENT_WRAPPER"
 PI_LAUNCH_LABEL="${PI_LAUNCH_LABEL:-com.faka.pi-qwen36}"
 PI_LAUNCH_AGENT="$HOME/Library/LaunchAgents/$PI_LAUNCH_LABEL.plist"
 PI_SHARED_MODEL="$PI_SHARED_DIR/$PI_MODEL_FILE"
 PI_LOCAL_MODEL="$PI_LOCAL_MODEL_DIR/$PI_MODEL_FILE"
-MANIFEST_DIR="$HOME/.config/local-agentic-dev"
+MANIFEST_DIR="$LOCAL_AGENT_CONFIG_DIR"
 MANIFEST="$MANIFEST_DIR/install-manifest"
 
 manifest_set() {
@@ -80,151 +90,80 @@ fi
 command -v brew >/dev/null 2>&1 || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 command -v llama-server >/dev/null 2>&1 || brew install llama.cpp
 command -v node >/dev/null 2>&1 || brew install node
-if command -v pi >/dev/null 2>&1; then
-  manifest_set installed_pi false
-else
-  npm install -g @mariozechner/pi-coding-agent
-  manifest_set installed_pi true
-fi
 
-info "Writing Pi config..."
-mkdir -p "$PI_AGENT_DIR"
-if [ -f "$PI_AGENT_DIR/settings.json" ] && [ ! -f "$PI_AGENT_DIR/settings.json.pre-local-agentic-dev" ]; then
-  cp "$PI_AGENT_DIR/settings.json" "$PI_AGENT_DIR/settings.json.pre-local-agentic-dev"
+if ! command -v aider >/dev/null 2>&1; then
+  if command -v uv >/dev/null 2>&1; then
+    uv tool install aider-chat
+  elif command -v pipx >/dev/null 2>&1; then
+    pipx install aider-chat
+  else
+    python3 -m pip install --user aider-chat
+  fi
 fi
-if [ -f "$PI_AGENT_DIR/models.json" ] && [ ! -f "$PI_AGENT_DIR/models.json.pre-local-agentic-dev" ]; then
-  cp "$PI_AGENT_DIR/models.json" "$PI_AGENT_DIR/models.json.pre-local-agentic-dev"
-fi
+command -v aider >/dev/null 2>&1 || die "aider was installed but is not on PATH. Add ~/.local/bin to PATH and rerun."
 
 PI_MODEL_ID_JSON=$(json_escape "$PI_MODEL_ID")
-PI_BASE_URL_JSON=$(json_escape "http://$PI_HOST:$PI_PORT/v1")
+PI_BASE_URL="http://$PI_HOST:$PI_PORT/v1"
+PI_BASE_URL_JSON=$(json_escape "$PI_BASE_URL")
 
-cat > "$PI_AGENT_DIR/settings.json" <<EOF
-{
-  "defaultProvider": "llama-cpp",
-  "defaultModel": "$PI_MODEL_ID_JSON",
-  "defaultThinkingLevel": "$PI_DEFAULT_THINKING",
-  "hideThinkingBlock": false,
-  "enableInstallTelemetry": false,
-  "enabledModels": ["$PI_MODEL_ID_JSON"],
-  "compaction": {
-    "enabled": true,
-    "reserveTokens": 8192,
-    "keepRecentTokens": 12000
-  },
-  "retry": {
-    "enabled": true,
-    "maxRetries": 1
-  }
-}
+info "Writing Aider config..."
+mkdir -p "$LOCAL_AGENT_CONFIG_DIR" "$LOCAL_AGENT_BIN_DIR"
+if [ -f "$HOME/.aider.conf.yml" ] && [ ! -f "$HOME/.aider.conf.yml.pre-local-agentic-dev" ]; then
+  cp "$HOME/.aider.conf.yml" "$HOME/.aider.conf.yml.pre-local-agentic-dev"
+fi
+
+cat > "$AIDER_ENV_FILE" <<EOF
+OPENAI_API_KEY=local
+OPENAI_API_BASE=$PI_BASE_URL
 EOF
 
-cat > "$PI_AGENT_DIR/models.json" <<EOF
-{
-  "providers": {
-    "llama-cpp": {
-      "baseUrl": "$PI_BASE_URL_JSON",
-      "api": "openai-completions",
-      "apiKey": "local",
-      "compat": {
-        "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false,
-        "thinkingFormat": "qwen-chat-template",
-        "maxTokensField": "max_tokens"
-      },
-      "models": [
-        {
-          "id": "$PI_MODEL_ID_JSON",
-          "name": "Qwen 3.6 27B Reasoning Q6 Local",
-          "reasoning": true,
-          "contextWindow": $PI_CONTEXT,
-          "maxTokens": $PI_MAX_TOKENS,
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cacheRead": 0,
-            "cacheWrite": 0
-          }
-        }
-      ]
-    }
-  }
-}
+cat > "$AIDER_CONFIG_FILE" <<EOF
+model: openai/$PI_MODEL_ID_JSON
+openai-api-base: $PI_BASE_URL_JSON
+openai-api-key: local
+edit-format: diff
+show-model-warnings: false
+check-model-accepts-settings: false
+analytics-disable: true
+auto-commits: false
+dirty-commits: false
+attribute-co-authored-by: false
+max-chat-history-tokens: 20000
+map-tokens: 4096
+map-refresh: auto
+cache-prompts: false
+suggest-shell-commands: true
 EOF
 
-info "Installing global Pi prompts and skills..."
-mkdir -p "$PI_AGENT_DIR/prompts" "$PI_AGENT_DIR/skills/local-agentic-dev"
-cat > "$PI_AGENT_DIR/prompts/plan.md" <<'EOF'
----
-description: Plan a coding change before editing
-argument-hint: "[task]"
----
-PLAN MODE. Inspect the relevant files first, then produce a concise implementation plan. Do not edit files yet. Keep the plan scoped to the requested task and call out the verification commands that should run afterward.
+if [ "$LOCAL_AGENT_WRITE_HOME_AIDER_CONFIG" = "true" ]; then
+  cp "$AIDER_CONFIG_FILE" "$HOME/.aider.conf.yml"
+  manifest_set wrote_home_aider_config true
+else
+  manifest_set wrote_home_aider_config false
+fi
+
+cat > "$AIDER_WRAPPER_PATH" <<EOF
+#!/bin/sh
+set -eu
+CONFIG_FILE="${LOCAL_AGENT_CONFIG_DIR}/aider.conf.yml"
+if [ ! -f "\$CONFIG_FILE" ]; then
+  printf 'Missing %s. Re-run local-agentic-dev install.sh.\n' "\$CONFIG_FILE" >&2
+  exit 1
+fi
+exec aider --config "\$CONFIG_FILE" "\$@"
 EOF
-cat > "$PI_AGENT_DIR/prompts/implement.md" <<'EOF'
----
-description: Implement the next approved step
-argument-hint: "[step or task]"
----
-IMPLEMENT MODE. Make the smallest correct change for the requested step. Read existing code before editing, preserve local patterns, avoid unrelated refactors, and stop after the scoped change.
-EOF
-cat > "$PI_AGENT_DIR/prompts/review.md" <<'EOF'
----
-description: Review current git changes for bugs
-argument-hint: "[focus]"
----
-REVIEW MODE. Review the current git diff as a strict code reviewer. Lead with bugs, regressions, missing tests, security issues, and architectural violations. Do not rewrite code unless explicitly asked.
-EOF
-cat > "$PI_AGENT_DIR/prompts/fix-failures.md" <<'EOF'
----
-description: Fix failures from validation output
-argument-hint: "[command output or failure summary]"
----
-FIX FAILURES MODE. Use the provided failure output, inspect only the relevant files, and fix the root cause. Do not broaden scope or refactor unrelated code. Re-run or request the narrowest validation command afterward.
-EOF
-cat > "$PI_AGENT_DIR/skills/local-agentic-dev/SKILL.md" <<'EOF'
----
-name: local-agentic-dev
-description: Use for local-only agentic coding on a developer machine with Pi, llama.cpp, and project validation loops.
----
+chmod 755 "$AIDER_WRAPPER_PATH"
+ok "Installed Aider config: $AIDER_CONFIG_FILE"
+ok "Installed wrapper command: $AIDER_WRAPPER_PATH"
 
-# Local Agentic Development
-
-Use this skill when working as a local coding agent.
-
-## Operating Rules
-
-- Stay local-only unless the user explicitly asks for internet or cloud services.
-- Inspect existing files before proposing or making edits.
-- Prefer small, correct diffs over broad rewrites.
-- Preserve project conventions, dependency boundaries, and existing tooling.
-- Use the repository's own validation commands rather than generic test commands.
-- If a command fails, fix the root cause and re-run the narrowest relevant command first.
-
-## Default Loop
-
-1. Plan the change.
-2. Implement one scoped step.
-3. Run the project's validation commands.
-4. Fix failures.
-5. Review the final diff for bugs and unrelated edits.
-
-## Common Web App Validation
-
-When a JavaScript or TypeScript project defines these scripts, prefer this order:
-
-```sh
-npm run lint
-npm run test:e2e
-npm run build
-```
-
-Use project documentation, package scripts, and AGENTS.md to override this list.
-EOF
-ok "Installed Pi prompt templates and local-agentic-dev skill."
+if [ "$LOCAL_AGENT_REMOVE_PI" = "true" ] && command -v pi >/dev/null 2>&1; then
+  info "Removing Pi CLI because LOCAL_AGENT_REMOVE_PI=true..."
+  npm uninstall -g @mariozechner/pi-coding-agent >/dev/null 2>&1 || warn "Could not remove global Pi CLI."
+fi
+manifest_set installed_pi false
 
 info "Writing launch agent: $PI_LAUNCH_AGENT"
-mkdir -p "$HOME/Library/LaunchAgents" "$PI_AGENT_DIR/logs"
+mkdir -p "$HOME/Library/LaunchAgents" "$LOCAL_AGENT_CONFIG_DIR/logs"
 cat > "$PI_LAUNCH_AGENT" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -248,7 +187,7 @@ cat > "$PI_LAUNCH_AGENT" <<EOF
     <string>-a</string>
     <string>$PI_MODEL_ID</string>
     <string>--reasoning</string>
-    <string>on</string>
+    <string>$LOCAL_AGENT_REASONING</string>
     <string>--no-webui</string>
     <string>--temp</string>
     <string>0.35</string>
@@ -266,9 +205,9 @@ cat > "$PI_LAUNCH_AGENT" <<EOF
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>$PI_AGENT_DIR/logs/llama-server.log</string>
+  <string>$LOCAL_AGENT_CONFIG_DIR/logs/llama-server.log</string>
   <key>StandardErrorPath</key>
-  <string>$PI_AGENT_DIR/logs/llama-server.err.log</string>
+  <string>$LOCAL_AGENT_CONFIG_DIR/logs/llama-server.err.log</string>
 </dict>
 </plist>
 EOF
@@ -279,8 +218,14 @@ manifest_set pi_port "$PI_PORT"
 manifest_set pi_context "$PI_CONTEXT"
 manifest_set pi_max_tokens "$PI_MAX_TOKENS"
 manifest_set pi_parallel "$PI_PARALLEL"
+manifest_set local_agent_reasoning "$LOCAL_AGENT_REASONING"
 manifest_set pi_launch_agent "$PI_LAUNCH_AGENT"
 manifest_set pi_agent_dir "$PI_AGENT_DIR"
+manifest_set harness "$LOCAL_AGENT_HARNESS"
+manifest_set aider_config "$AIDER_CONFIG_FILE"
+manifest_set aider_env "$AIDER_ENV_FILE"
+manifest_set aider_wrapper "$AIDER_WRAPPER_PATH"
+manifest_set home_aider_config "$HOME/.aider.conf.yml"
 
 if [ "$PI_DISABLE_LEGACY_AGENTS" = "true" ]; then
   for _legacy_label in $PI_LEGACY_LABELS; do
@@ -305,7 +250,7 @@ if [ "$PI_REPLACE_PORT_OWNER" = "true" ] && command -v lsof >/dev/null 2>&1; the
   fi
 fi
 
-info "Starting Pi model server..."
+info "Starting local model server..."
 launchctl bootout "gui/$(id -u)" "$PI_LAUNCH_AGENT" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/$(id -u)" "$PI_LAUNCH_AGENT" >/dev/null 2>&1 || true
 launchctl enable "gui/$(id -u)/$PI_LAUNCH_LABEL" >/dev/null 2>&1 || true
@@ -315,16 +260,18 @@ _timeout=30
 while ! curl -sf "http://$PI_HOST:$PI_PORT/v1/models" >/dev/null 2>&1; do
   sleep 1
   _timeout=$((_timeout - 1))
-  [ "$_timeout" -gt 0 ] || die "Pi model server did not answer on $PI_HOST:$PI_PORT. Check $PI_AGENT_DIR/logs/llama-server.err.log"
+  [ "$_timeout" -gt 0 ] || die "Local model server did not answer on $PI_HOST:$PI_PORT. Check $LOCAL_AGENT_CONFIG_DIR/logs/llama-server.err.log"
 done
 
-ok "Pi model server is ready."
+ok "Local model server is ready."
 printf '\n================================================\n'
-printf '  Pi + Qwen 3.6 Setup Complete\n'
+printf '  Aider + Qwen 3.6 Setup Complete\n'
 printf '================================================\n\n'
-printf '  Command : pi\n'
-printf '  Model   : %s\n' "$PI_MODEL_ID"
+printf '  Commands: aider  or  %s\n' "$LOCAL_AGENT_WRAPPER"
+printf '  Model   : openai/%s\n' "$PI_MODEL_ID"
 printf '  Server  : http://%s:%s/v1\n' "$PI_HOST" "$PI_PORT"
 printf '  Context : %s\n' "$PI_CONTEXT"
 printf '  Parallel: %s\n' "$PI_PARALLEL"
+printf '  Reason  : %s\n' "$LOCAL_AGENT_REASONING"
+printf '  Config  : %s\n' "$AIDER_CONFIG_FILE"
 printf '  GGUF    : %s\n\n' "$PI_SHARED_MODEL"

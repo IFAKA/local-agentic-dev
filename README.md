@@ -1,10 +1,10 @@
-# Pi + Qwen 3.6 Local Setup
+# Aider + Qwen 3.6 Local Setup
 
-Local setup for the `pi` coding agent using a dedicated `llama-server` endpoint:
+Local setup for the `aider` coding agent using a dedicated `llama-server` endpoint:
 
 - **Machine:** Apple Silicon `Mac16,8`
 - **Memory target:** 48 GB unified memory
-- **Pi model id:** `qwen3.6-27b-reasoning`
+- **Aider model:** `openai/qwen3.6-27b-reasoning`
 - **Server:** `http://127.0.0.1:11435/v1`
 - **Model file:** `Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf`
 - **Default context:** `32768`
@@ -37,36 +37,40 @@ The installer copies it into shared storage:
 /Users/Shared/pi-qwen36/Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf
 ```
 
-Then run the installer from the other macOS user. That second user will reuse the shared GGUF and create its own per-user Pi config and LaunchAgent.
+Then run the installer from the other macOS user. That second user will reuse the shared GGUF and create its own per-user Aider config and LaunchAgent.
 
 ## What Gets Installed
 
-- `pi` CLI via `@mariozechner/pi-coding-agent`
+- `aider` CLI if it is not already installed
 - `llama-server` via Homebrew `llama.cpp`
 - `~/Library/LaunchAgents/com.faka.pi-qwen36.plist`
-- `~/.pi/agent/settings.json`
-- `~/.pi/agent/models.json`
-- `~/.pi/agent/prompts/{plan,implement,review,fix-failures}.md`
-- `~/.pi/agent/skills/local-agentic-dev/SKILL.md`
+- `~/.config/local-agentic-dev/aider.conf.yml`
+- `~/.config/local-agentic-dev/aider.env`
+- `~/.local/bin/local-code` wrapper
+- `~/.aider.conf.yml` so plain `aider` uses the local model by default
 - `~/.config/local-agentic-dev/install-manifest`
 
-Existing Pi settings and model config are backed up before replacement.
+Existing `~/.aider.conf.yml` is backed up before replacement. The installer removes the Pi CLI by default because this setup is Aider-first.
 
 ## Usage
 
 ```sh
-pi
+aider
+# or
+local-code
 ```
 
-The generated Pi config uses:
+The generated Aider config uses:
 
 ```text
-provider: llama-cpp
-model: qwen3.6-27b-reasoning
+provider: OpenAI-compatible llama.cpp
+model: openai/qwen3.6-27b-reasoning
 baseUrl: http://127.0.0.1:11435/v1
 contextWindow: 32768
 maxTokens: 8192
 parallelSlots: 1
+reasoning: off by default for lower transcript/context noise
+config: ~/.config/local-agentic-dev/aider.conf.yml
 ```
 
 ## Options
@@ -116,13 +120,13 @@ Uninstall removes generated configs and restores backups, but it keeps the share
 
 ## Device Tuning Notes
 
-The installer is tuned for a 48 GB Apple Silicon Mac by default: Qwen 3.6 27B Q6, 32K context, 8K max output, and one llama.cpp server slot (`-np 1`). One slot is intentional for local coding because parallel slots multiply KV-cache pressure without helping a single Pi session.
+The installer is tuned for a 48 GB Apple Silicon Mac by default: Qwen 3.6 27B Q6, 32K context, 8K max output, and one llama.cpp server slot (`-np 1`). One slot is intentional for local coding because parallel slots multiply KV-cache pressure without helping a single Aider session.
 
-For local Qwen-compatible servers, the generated Pi config uses `thinkingFormat: "qwen-chat-template"` and disables OpenAI-style `reasoning_effort`. This matches Pi's current compatibility guidance for local OpenAI-compatible endpoints.
+Aider is configured through `~/.config/local-agentic-dev/aider.conf.yml`. To change models later, rerun the installer with `PI_MODEL_ID=... PI_MODEL_FILE=...` or edit that config once. You do not need to rewrite aliases or remember the full `aider --model ...` command. The server defaults to `LOCAL_AGENT_REASONING=off` because Aider stores chat history and visible thinking wastes context; use `LOCAL_AGENT_REASONING=on ./install.sh` only when you want a noisier reasoning profile.
 
 ## Benchmarking The Frontier
 
-The installer default is a hypothesis, not proof. To measure the device-specific frontier, run:
+The installer default is a hypothesis, not proof. To measure the device-specific frontier, keep the local model server running and run:
 
 ```sh
 scripts/benchmark-frontier.py --runs 3
