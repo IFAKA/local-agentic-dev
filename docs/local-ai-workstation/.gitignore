@@ -1,0 +1,6 @@
+.lad/
+sessions/
+results/lad/
+results/benchmark-workspaces/
+results/sandbox-home/
+results/benchmark-aider-*

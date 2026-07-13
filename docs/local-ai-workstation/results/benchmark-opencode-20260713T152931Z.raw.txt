@@ -1,0 +1,5 @@
+DRY RUN ONLY: agent command was not executed.
+Planned command:
+opencode run --model ollama/qwen3.6:35b-a3b-nvfp4 Explain\ the\ repository\ purpose\ in\ three\ concise\ bullets\ using\ only\ local\ context.
+
+Run with --execute or LOCAL_AI_WORKSTATION_BENCHMARK_EXECUTE=1 to collect measured output.
