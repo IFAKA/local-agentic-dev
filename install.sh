@@ -1,277 +1,296 @@
 #!/bin/sh
-# install.sh - Aider + Qwen 3.6 local coding agent
-# curl -sSL https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main/install.sh | sh
+# install.sh - Pi + Rapid-MLX coding harness
 set -eu
 
-info() { printf '[info]  %s\n' "$*"; }
-ok()   { printf '[ ok ]  %s\n' "$*"; }
-warn() { printf '[warn]  %s\n' "$*"; }
-die()  { printf '[fail]  %s\n' "$*" >&2; exit 1; }
+START_TIME=$(date +%s)
+STEP=0
 
-LOCAL_AGENT_HARNESS="${LOCAL_AGENT_HARNESS:-aider}"
-LOCAL_AGENT_BIN_DIR="${LOCAL_AGENT_BIN_DIR:-$HOME/.local/bin}"
-LOCAL_AGENT_CONFIG_DIR="${LOCAL_AGENT_CONFIG_DIR:-$HOME/.config/local-agentic-dev}"
-LOCAL_AGENT_WRAPPER="${LOCAL_AGENT_WRAPPER:-local-code}"
-LOCAL_AGENT_REMOVE_PI="${LOCAL_AGENT_REMOVE_PI:-true}"
-LOCAL_AGENT_WRITE_HOME_AIDER_CONFIG="${LOCAL_AGENT_WRITE_HOME_AIDER_CONFIG:-true}"
-LOCAL_AGENT_REASONING="${LOCAL_AGENT_REASONING:-off}"
-PI_MODEL_ID="${PI_MODEL_ID:-qwen3.6-27b-reasoning}"
-PI_MODEL_FILE="${PI_MODEL_FILE:-Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf}"
-PI_CONTEXT="${PI_CONTEXT:-32768}"
-PI_MAX_TOKENS="${PI_MAX_TOKENS:-8192}"
-PI_PARALLEL="${PI_PARALLEL:-1}"
-PI_DEFAULT_THINKING="${PI_DEFAULT_THINKING:-high}"
-PI_REPLACE_PORT_OWNER="${PI_REPLACE_PORT_OWNER:-true}"
-PI_DISABLE_LEGACY_AGENTS="${PI_DISABLE_LEGACY_AGENTS:-true}"
-PI_LEGACY_LABELS="${PI_LEGACY_LABELS:-ollama.custom}"
-PI_HOST="${PI_HOST:-127.0.0.1}"
-PI_PORT="${PI_PORT:-11435}"
-PI_SHARED_DIR="${PI_SHARED_DIR:-/Users/Shared/pi-qwen36}"
-PI_LOCAL_MODEL_DIR="${PI_LOCAL_MODEL_DIR:-$HOME/.ollama-pi-qwen36}"
-PI_GGUF_URL="${PI_GGUF_URL:-}"
+usage() {
+  cat <<'EOF_USAGE'
+Usage: ./install.sh [--deep-reasoning]
+
+Environment overrides:
+  PI_CONTEXT, PI_MAX_TOKENS, PI_RAPID_MODEL, PI_RAPID_PORT, PI_RAPID_BASE_URL
+  PI_PROFILE=normal|deep-reasoning, PI_MIN_FREE_GB, PI_MIN_MEMORY_GB
+  PI_SKIP_RUNTIME=1 (write/test configuration without loading LaunchAgent)
+EOF_USAGE
+}
+
+PI_PROFILE="${PI_PROFILE:-normal}"
+PI_THINKING="${PI_THINKING:-off}"
+case "${1:-}" in
+  "") ;;
+  --deep-reasoning) PI_PROFILE=deep-reasoning ;;
+  --help|-h) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+case "$PI_PROFILE:$PI_THINKING" in
+  normal:off|deep-reasoning:off|deep-reasoning:on) ;;
+  normal:on) PI_PROFILE=deep-reasoning ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+if [ -t 1 ] && [ -t 2 ]; then
+  C_RESET=$(printf '\033[0m')
+  C_DIM=$(printf '\033[2m')
+  C_CYAN=$(printf '\033[36m')
+  C_GREEN=$(printf '\033[32m')
+  C_YELLOW=$(printf '\033[33m')
+  C_RED=$(printf '\033[31m')
+else
+  C_RESET=''; C_DIM=''; C_CYAN=''; C_GREEN=''; C_YELLOW=''; C_RED=''
+fi
+
+elapsed() {
+  now=$(date +%s)
+  printf '%02dm%02ds' $(((now - START_TIME) / 60)) $(((now - START_TIME) % 60))
+}
+
+info() { printf '%s[%s]%s  %s\n' "$C_DIM" "$(elapsed)" "$C_RESET" "$*"; }
+ok() { printf '%s[%s]%s  %s✓%s %s\n' "$C_DIM" "$(elapsed)" "$C_RESET" "$C_GREEN" "$C_RESET" "$*"; }
+warn() { printf '%s[%s]%s  %s!%s %s\n' "$C_DIM" "$(elapsed)" "$C_RESET" "$C_YELLOW" "$C_RESET" "$*"; }
+die() { printf '%s[%s]%s  %s✗%s %s\n' "$C_DIM" "$(elapsed)" "$C_RESET" "$C_RED" "$C_RESET" "$*" >&2; exit 1; }
+step() {
+  STEP=$((STEP + 1))
+  printf '\n%s[%02d]%s %s%s%s\n' "$C_CYAN" "$STEP" "$C_RESET" "$C_CYAN" "$*" "$C_RESET"
+}
+
+printf '\n%sPi + Rapid-MLX local coding setup%s\n' "$C_CYAN" "$C_RESET"
+printf '%sLive installer output · elapsed time shown on every event%s\n' "$C_DIM" "$C_RESET"
+
+step "Checking platform"
+[ "$(uname -s)" = "Darwin" ] || die "macOS is required."
+[ "$(uname -m)" = "arm64" ] || die "Apple Silicon is required."
+CHECK_MIN_MEMORY_GB="${PI_MIN_MEMORY_GB:-40}"
+CHECK_MIN_FREE_GB="${PI_MIN_FREE_GB:-20}"
+MEM_BYTES="$(sysctl -n hw.memsize 2>/dev/null || printf '0')"
+MIN_MEM_BYTES=$((CHECK_MIN_MEMORY_GB * 1024 * 1024 * 1024))
+[ "$MEM_BYTES" -ge "$MIN_MEM_BYTES" ] || die "At least ${CHECK_MIN_MEMORY_GB} GB unified memory is required (detected ${MEM_BYTES} bytes)."
+FREE_KB="$(df -Pk . | awk 'NR==2 {print $4}')"
+MIN_FREE_KB=$((CHECK_MIN_FREE_GB * 1024 * 1024))
+[ "${FREE_KB:-0}" -ge "$MIN_FREE_KB" ] || die "Only $(( ${FREE_KB:-0} / 1024 / 1024 )) GB free; at least ${CHECK_MIN_FREE_GB} GB is required. Nothing was changed."
+ok "Apple Silicon and memory check passed; disk headroom is $((FREE_KB / 1024 / 1024)) GB."
+
+PI_PACKAGE="${PI_PACKAGE:-@earendil-works/pi-coding-agent}"
 PI_AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
-AIDER_CONFIG_FILE="$LOCAL_AGENT_CONFIG_DIR/aider.conf.yml"
-AIDER_ENV_FILE="$LOCAL_AGENT_CONFIG_DIR/aider.env"
-AIDER_WRAPPER_PATH="$LOCAL_AGENT_BIN_DIR/$LOCAL_AGENT_WRAPPER"
-PI_LAUNCH_LABEL="${PI_LAUNCH_LABEL:-com.faka.pi-qwen36}"
-PI_LAUNCH_AGENT="$HOME/Library/LaunchAgents/$PI_LAUNCH_LABEL.plist"
-PI_SHARED_MODEL="$PI_SHARED_DIR/$PI_MODEL_FILE"
-PI_LOCAL_MODEL="$PI_LOCAL_MODEL_DIR/$PI_MODEL_FILE"
-MANIFEST_DIR="$LOCAL_AGENT_CONFIG_DIR"
-MANIFEST="$MANIFEST_DIR/install-manifest"
+LOCAL_AGENT_CONFIG_DIR="${LOCAL_AGENT_CONFIG_DIR:-$HOME/.config/local-agentic-dev}"
+PI_PROVIDER_ID="${PI_PROVIDER_ID:-rapid-mlx}"
+PI_PROVIDER_NAME="${PI_PROVIDER_NAME:-Rapid-MLX}"
+PI_RAPID_PORT="${PI_RAPID_PORT:-8000}"
+PI_RAPID_BASE_URL="${PI_RAPID_BASE_URL:-http://127.0.0.1:$PI_RAPID_PORT/v1}"
+PI_RAPID_MODEL="${PI_RAPID_MODEL:-mlx-community/Qwen3.6-35B-A3B-nvfp4}"
+PI_DEFAULT_PROVIDER="${PI_DEFAULT_PROVIDER:-$PI_PROVIDER_ID}"
+PI_DEFAULT_MODEL="${PI_DEFAULT_MODEL:-$PI_RAPID_MODEL}"
+PI_CONTEXT="${PI_CONTEXT:-98304}"
+PI_MAX_TOKENS="${PI_MAX_TOKENS:-12288}"
+PI_MIN_MEMORY_GB="${PI_MIN_MEMORY_GB:-40}"
+PI_MIN_FREE_GB="${PI_MIN_FREE_GB:-20}"
+PI_REQUIRED_VERSION="${PI_REQUIRED_VERSION:-0.84.1}"
+PI_SKIP_RUNTIME="${PI_SKIP_RUNTIME:-0}"
+PI_RAPID_LAUNCH_LABEL="${PI_RAPID_LAUNCH_LABEL:-com.local-agentic-dev.rapid-mlx}"
+PI_RAPID_LAUNCH_AGENT="$HOME/Library/LaunchAgents/$PI_RAPID_LAUNCH_LABEL.plist"
+PI_RAPID_LOG_DIR="$LOCAL_AGENT_CONFIG_DIR/logs"
+MANIFEST="$LOCAL_AGENT_CONFIG_DIR/install-manifest"
 
 manifest_set() {
-  _key="$1"; _value="$2"
-  mkdir -p "$MANIFEST_DIR"
-  if [ -f "$MANIFEST" ] && grep -q "^${_key}=" "$MANIFEST"; then
-    _tmp=$(mktemp)
-    grep -v "^${_key}=" "$MANIFEST" > "$_tmp"
-    printf '%s=%s\n' "$_key" "$_value" >> "$_tmp"
-    mv "$_tmp" "$MANIFEST"
+  key="$1"; value="$2"
+  mkdir -p "$LOCAL_AGENT_CONFIG_DIR"
+  if [ -f "$MANIFEST" ] && grep -q "^${key}=" "$MANIFEST"; then
+    tmp="$(mktemp)"
+    grep -v "^${key}=" "$MANIFEST" > "$tmp"
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+    mv "$tmp" "$MANIFEST"
   else
-    printf '%s=%s\n' "$_key" "$_value" >> "$MANIFEST"
+    printf '%s=%s\n' "$key" "$value" >> "$MANIFEST"
   fi
 }
 
-json_escape() {
-  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+backup_once() {
+  file="$1"; backup="$file.pre-local-agentic-dev"
+  if [ -f "$file" ] && [ ! -f "$backup" ]; then
+    cp "$file" "$backup"
+    ok "Backed up $file"
+  fi
 }
 
-info "Checking platform..."
-[ "$(uname -s)" = "Darwin" ] || die "macOS required."
-[ "$(uname -m)" = "arm64" ] || die "Apple Silicon required."
+step "Checking required tools"
+command -v rapid-mlx >/dev/null 2>&1 || die "Rapid-MLX is required. Install it with: brew install rapid-mlx"
+command -v node >/dev/null 2>&1 || die "Node is required."
+ok "Rapid-MLX and Node are available."
 
-TOTAL_RAM_BYTES=$(sysctl -n hw.memsize 2>/dev/null || printf '0')
-TOTAL_RAM_GB=$((TOTAL_RAM_BYTES / 1024 / 1024 / 1024))
-info "Detected ${TOTAL_RAM_GB}GB unified memory."
-if [ "$TOTAL_RAM_GB" -lt 32 ]; then
-  warn "Qwen 3.6 27B Q6 is intended for 32GB+ Macs and is best on 48GB+."
-fi
-
-info "Preparing shared model directory: $PI_SHARED_DIR"
-mkdir -p "$PI_SHARED_DIR"
-chmod 775 "$PI_SHARED_DIR" 2>/dev/null || true
-
-if [ -f "$PI_SHARED_MODEL" ]; then
-  ok "Shared GGUF already exists: $PI_SHARED_MODEL"
-elif [ -f "$PI_LOCAL_MODEL" ]; then
-  info "Copying existing Pi GGUF into shared storage..."
-  cp "$PI_LOCAL_MODEL" "$PI_SHARED_MODEL"
-  chmod 664 "$PI_SHARED_MODEL" 2>/dev/null || true
-  ok "Copied model to $PI_SHARED_MODEL"
-elif [ -n "$PI_GGUF_URL" ]; then
-  warn "Shared GGUF not found. Downloading once from PI_GGUF_URL..."
-  curl -fL "$PI_GGUF_URL" -o "$PI_SHARED_MODEL"
-  chmod 664 "$PI_SHARED_MODEL" 2>/dev/null || true
-else
-  die "Missing $PI_SHARED_MODEL. Run this first from the user that already has $PI_LOCAL_MODEL, or set PI_GGUF_URL."
-fi
-
-command -v brew >/dev/null 2>&1 || /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-command -v llama-server >/dev/null 2>&1 || brew install llama.cpp
-command -v node >/dev/null 2>&1 || brew install node
-
-if ! command -v aider >/dev/null 2>&1; then
-  if command -v uv >/dev/null 2>&1; then
-    uv tool install aider-chat
-  elif command -v pipx >/dev/null 2>&1; then
-    pipx install aider-chat
-  else
-    python3 -m pip install --user aider-chat
+step "Checking Pi CLI"
+if command -v pi >/dev/null 2>&1; then
+  PI_VERSION="$(pi --version 2>/dev/null | head -1 | tr -d 'v')"
+  if [ "$PI_VERSION" != "$PI_REQUIRED_VERSION" ]; then
+    command -v npm >/dev/null 2>&1 || die "Pi ${PI_VERSION:-unknown} is stale; npm is required to install $PI_PACKAGE@$PI_REQUIRED_VERSION."
+    info "Upgrading Pi from ${PI_VERSION:-unknown} to $PI_REQUIRED_VERSION..."
+    npm install -g "$PI_PACKAGE@$PI_REQUIRED_VERSION"
   fi
-fi
-command -v aider >/dev/null 2>&1 || die "aider was installed but is not on PATH. Add ~/.local/bin to PATH and rerun."
-
-PI_MODEL_ID_JSON=$(json_escape "$PI_MODEL_ID")
-PI_BASE_URL="http://$PI_HOST:$PI_PORT/v1"
-PI_BASE_URL_JSON=$(json_escape "$PI_BASE_URL")
-
-info "Writing Aider config..."
-mkdir -p "$LOCAL_AGENT_CONFIG_DIR" "$LOCAL_AGENT_BIN_DIR"
-if [ -f "$HOME/.aider.conf.yml" ] && [ ! -f "$HOME/.aider.conf.yml.pre-local-agentic-dev" ]; then
-  cp "$HOME/.aider.conf.yml" "$HOME/.aider.conf.yml.pre-local-agentic-dev"
-fi
-
-cat > "$AIDER_ENV_FILE" <<EOF
-OPENAI_API_KEY=local
-OPENAI_API_BASE=$PI_BASE_URL
-EOF
-
-cat > "$AIDER_CONFIG_FILE" <<EOF
-model: openai/$PI_MODEL_ID_JSON
-openai-api-base: $PI_BASE_URL_JSON
-openai-api-key: local
-edit-format: diff
-show-model-warnings: false
-check-model-accepts-settings: false
-analytics-disable: true
-auto-commits: false
-dirty-commits: false
-attribute-co-authored-by: false
-max-chat-history-tokens: 20000
-map-tokens: 4096
-map-refresh: auto
-cache-prompts: false
-suggest-shell-commands: true
-EOF
-
-if [ "$LOCAL_AGENT_WRITE_HOME_AIDER_CONFIG" = "true" ]; then
-  cp "$AIDER_CONFIG_FILE" "$HOME/.aider.conf.yml"
-  manifest_set wrote_home_aider_config true
+  ok "Pi CLI ready: $(command -v pi) ($(pi --version 2>/dev/null | head -1))"
 else
-  manifest_set wrote_home_aider_config false
+  command -v npm >/dev/null 2>&1 || die "npm is required to install $PI_PACKAGE."
+  info "Installing $PI_PACKAGE@$PI_REQUIRED_VERSION with npm; package output follows..."
+  npm install -g "$PI_PACKAGE@$PI_REQUIRED_VERSION"
+  ok "Pi CLI installed."
 fi
+command -v pi >/dev/null 2>&1 || die "Pi CLI is not on PATH."
 
-cat > "$AIDER_WRAPPER_PATH" <<EOF
-#!/bin/sh
-set -eu
-CONFIG_FILE="${LOCAL_AGENT_CONFIG_DIR}/aider.conf.yml"
-if [ ! -f "\$CONFIG_FILE" ]; then
-  printf 'Missing %s. Re-run local-agentic-dev install.sh.\n' "\$CONFIG_FILE" >&2
-  exit 1
+step "Preparing configuration directories"
+mkdir -p "$PI_AGENT_DIR" "$LOCAL_AGENT_CONFIG_DIR" "$HOME/Library/LaunchAgents" "$PI_RAPID_LOG_DIR"
+ok "Configuration directories ready."
+backup_once "$PI_AGENT_DIR/models.json"
+backup_once "$PI_AGENT_DIR/settings.json"
+
+step "Writing Pi provider configuration"
+export PI_AGENT_DIR PI_PROVIDER_ID PI_PROVIDER_NAME PI_RAPID_BASE_URL PI_RAPID_MODEL PI_DEFAULT_PROVIDER PI_DEFAULT_MODEL PI_CONTEXT PI_MAX_TOKENS
+info "Model: $PI_RAPID_MODEL"
+info "Context: $PI_CONTEXT tokens · output limit: $PI_MAX_TOKENS tokens"
+node <<'EOF_NODE'
+const fs = require('fs');
+const path = require('path');
+
+const dir = process.env.PI_AGENT_DIR;
+const modelsPath = path.join(dir, 'models.json');
+const settingsPath = path.join(dir, 'settings.json');
+const model = process.env.PI_RAPID_MODEL;
+const provider = process.env.PI_PROVIDER_ID;
+const settings = fs.existsSync(settingsPath) ? JSON.parse(fs.readFileSync(settingsPath, 'utf8')) : {};
+const models = fs.existsSync(modelsPath) ? JSON.parse(fs.readFileSync(modelsPath, 'utf8')) : {};
+
+models.providers = {
+  [provider]: {
+    baseUrl: process.env.PI_RAPID_BASE_URL,
+    api: 'openai-completions',
+    apiKey: 'rapid-mlx',
+    compat: {
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: false,
+      thinkingFormat: 'qwen-chat-template',
+      maxTokensField: 'max_tokens'
+    },
+    models: [{
+      id: model,
+      name: `${process.env.PI_PROVIDER_NAME} - ${model}`,
+      reasoning: true,
+      contextWindow: Number(process.env.PI_CONTEXT),
+      maxTokens: Number(process.env.PI_MAX_TOKENS),
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    }]
+  }
+};
+
+settings.defaultProvider = process.env.PI_DEFAULT_PROVIDER;
+settings.defaultModel = process.env.PI_DEFAULT_MODEL;
+settings.enabledModels = [process.env.PI_DEFAULT_MODEL];
+settings.packages = (Array.isArray(settings.packages) ? settings.packages : [])
+  .filter((pkg) => !pkg.includes('@ollama/pi-web-search'));
+fs.writeFileSync(modelsPath, JSON.stringify(models, null, 2) + '\n');
+fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+EOF_NODE
+ok "Pi provider and settings written."
+
+step "Writing Rapid-MLX LaunchAgent"
+if [ "$PI_PROFILE" = "deep-reasoning" ]; then
+  RAPID_PROFILE_ARGS='<string>--reasoning</string>'
+else
+  RAPID_PROFILE_ARGS='<string>--no-thinking</string>'
 fi
-exec aider --config "\$CONFIG_FILE" "\$@"
-EOF
-chmod 755 "$AIDER_WRAPPER_PATH"
-ok "Installed Aider config: $AIDER_CONFIG_FILE"
-ok "Installed wrapper command: $AIDER_WRAPPER_PATH"
-
-if [ "$LOCAL_AGENT_REMOVE_PI" = "true" ] && command -v pi >/dev/null 2>&1; then
-  info "Removing Pi CLI because LOCAL_AGENT_REMOVE_PI=true..."
-  npm uninstall -g @mariozechner/pi-coding-agent >/dev/null 2>&1 || warn "Could not remove global Pi CLI."
-fi
-manifest_set installed_pi false
-
-info "Writing launch agent: $PI_LAUNCH_AGENT"
-mkdir -p "$HOME/Library/LaunchAgents" "$LOCAL_AGENT_CONFIG_DIR/logs"
-cat > "$PI_LAUNCH_AGENT" <<EOF
+cat > "$PI_RAPID_LAUNCH_AGENT" <<EOF_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>$PI_LAUNCH_LABEL</string>
+  <key>Label</key><string>$PI_RAPID_LAUNCH_LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$(command -v llama-server)</string>
-    <string>-m</string>
-    <string>$PI_SHARED_MODEL</string>
-    <string>-c</string>
-    <string>$PI_CONTEXT</string>
-    <string>-np</string>
-    <string>$PI_PARALLEL</string>
-    <string>--host</string>
-    <string>$PI_HOST</string>
-    <string>--port</string>
-    <string>$PI_PORT</string>
-    <string>-a</string>
-    <string>$PI_MODEL_ID</string>
-    <string>--reasoning</string>
-    <string>$LOCAL_AGENT_REASONING</string>
-    <string>--no-webui</string>
-    <string>--temp</string>
-    <string>0.35</string>
-    <string>--top-p</string>
-    <string>0.9</string>
-    <string>--top-k</string>
-    <string>20</string>
-    <string>--min-p</string>
-    <string>0</string>
-    <string>--repeat-penalty</string>
-    <string>1.05</string>
+    <string>$(command -v rapid-mlx)</string>
+    <string>serve</string><string>$PI_RAPID_MODEL</string>
+    <string>--host</string><string>127.0.0.1</string>
+    <string>--port</string><string>$PI_RAPID_PORT</string>
+    <string>--max-num-seqs</string><string>1</string>
+    <string>--max-concurrent-requests</string><string>1</string>
+    <string>--enable-auto-tool-choice</string>
+    <string>--tool-call-parser</string><string>qwen3</string>
+    $RAPID_PROFILE_ARGS
+    <string>--max-tokens</string><string>$PI_MAX_TOKENS</string>
   </array>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>$LOCAL_AGENT_CONFIG_DIR/logs/llama-server.log</string>
-  <key>StandardErrorPath</key>
-  <string>$LOCAL_AGENT_CONFIG_DIR/logs/llama-server.err.log</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Interactive</string>
+  <key>StandardOutPath</key><string>$PI_RAPID_LOG_DIR/rapid-mlx.log</string>
+  <key>StandardErrorPath</key><string>$PI_RAPID_LOG_DIR/rapid-mlx.err.log</string>
 </dict>
 </plist>
-EOF
+EOF_PLIST
+ok "LaunchAgent written: $PI_RAPID_LAUNCH_AGENT"
 
-manifest_set pi_model_id "$PI_MODEL_ID"
-manifest_set pi_model_file "$PI_SHARED_MODEL"
-manifest_set pi_port "$PI_PORT"
+step "Recording install manifest"
+manifest_set harness rapid-mlx
+manifest_set pi_package "$PI_PACKAGE"
+manifest_set pi_agent_dir "$PI_AGENT_DIR"
+manifest_set pi_models "$PI_AGENT_DIR/models.json"
+manifest_set pi_settings "$PI_AGENT_DIR/settings.json"
+manifest_set pi_rapid_base_url "$PI_RAPID_BASE_URL"
+manifest_set pi_rapid_port "$PI_RAPID_PORT"
+manifest_set pi_rapid_model "$PI_RAPID_MODEL"
+manifest_set pi_rapid_launch_agent "$PI_RAPID_LAUNCH_AGENT"
+manifest_set pi_default_provider "$PI_DEFAULT_PROVIDER"
+manifest_set pi_default_model "$PI_DEFAULT_MODEL"
 manifest_set pi_context "$PI_CONTEXT"
 manifest_set pi_max_tokens "$PI_MAX_TOKENS"
-manifest_set pi_parallel "$PI_PARALLEL"
-manifest_set local_agent_reasoning "$LOCAL_AGENT_REASONING"
-manifest_set pi_launch_agent "$PI_LAUNCH_AGENT"
-manifest_set pi_agent_dir "$PI_AGENT_DIR"
-manifest_set harness "$LOCAL_AGENT_HARNESS"
-manifest_set aider_config "$AIDER_CONFIG_FILE"
-manifest_set aider_env "$AIDER_ENV_FILE"
-manifest_set aider_wrapper "$AIDER_WRAPPER_PATH"
-manifest_set home_aider_config "$HOME/.aider.conf.yml"
+manifest_set pi_profile "$PI_PROFILE"
+manifest_set pi_version "$PI_REQUIRED_VERSION"
+ok "Install manifest updated."
 
-if [ "$PI_DISABLE_LEGACY_AGENTS" = "true" ]; then
-  for _legacy_label in $PI_LEGACY_LABELS; do
-    _legacy_plist="$HOME/Library/LaunchAgents/${_legacy_label}.plist"
-    if [ -f "$_legacy_plist" ]; then
-      warn "Disabling legacy LaunchAgent $_legacy_label to prevent port conflicts."
-      launchctl bootout "gui/$(id -u)/$_legacy_label" >/dev/null 2>&1 || true
-      mv "$_legacy_plist" "$_legacy_plist.disabled-local-agentic-dev" 2>/dev/null || true
-      manifest_set "legacy_${_legacy_label}_plist" "$_legacy_plist.disabled-local-agentic-dev"
-    else
-      launchctl bootout "gui/$(id -u)/$_legacy_label" >/dev/null 2>&1 || true
+if [ "$PI_SKIP_RUNTIME" = "1" ]; then
+  warn "PI_SKIP_RUNTIME=1: configuration written; LaunchAgent was not loaded."
+  printf '\n%sConfiguration complete.%s\n' "$C_GREEN" "$C_RESET"
+  exit 0
+fi
+
+step "Restarting Rapid-MLX service"
+info "Stopping any previous LaunchAgent instance..."
+launchctl bootout "gui/$(id -u)" "$PI_RAPID_LAUNCH_AGENT" >/dev/null 2>&1 || true
+sleep 1
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PI_RAPID_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  die "Port $PI_RAPID_PORT is already in use. Set PI_RAPID_PORT to a free dedicated port and rerun."
+fi
+info "Registering LaunchAgent..."
+if launchctl bootstrap "gui/$(id -u)" "$PI_RAPID_LAUNCH_AGENT" >/dev/null 2>&1; then
+  info "Kickstarting Rapid-MLX..."
+  launchctl enable "gui/$(id -u)/$PI_RAPID_LAUNCH_LABEL" >/dev/null 2>&1 || true
+  launchctl kickstart -k "gui/$(id -u)/$PI_RAPID_LAUNCH_LABEL" >/dev/null 2>&1 || true
+  ok "Rapid-MLX LaunchAgent loaded."
+  info "Waiting for the model server to become ready (up to 60 seconds)..."
+  ready=false
+  attempt=0
+  while [ "$attempt" -lt 60 ]; do
+    if curl -fsS --max-time 2 "$PI_RAPID_BASE_URL/models" >/dev/null 2>&1; then
+      ready=true
+      break
     fi
+    attempt=$((attempt + 1))
+    if [ -t 1 ]; then
+      printf '\r%s[%s]%s  Loading model... %02ds elapsed' "$C_DIM" "$(elapsed)" "$C_RESET" "$attempt"
+    elif [ $((attempt % 10)) -eq 0 ]; then
+      info "Still waiting for Rapid-MLX (${attempt}s elapsed)..."
+    fi
+    sleep 1
   done
-fi
-
-if [ "$PI_REPLACE_PORT_OWNER" = "true" ] && command -v lsof >/dev/null 2>&1; then
-  _pids=$(lsof -tiTCP:"$PI_PORT" -sTCP:LISTEN 2>/dev/null || true)
-  if [ -n "$_pids" ]; then
-    warn "Stopping existing process(es) listening on port $PI_PORT: $_pids"
-    kill $_pids 2>/dev/null || true
-    sleep 2
+  [ -t 1 ] && printf '\n'
+  if [ "$ready" = "true" ]; then
+    ok "Rapid-MLX endpoint is ready: $PI_RAPID_BASE_URL"
+  else
+    warn "LaunchAgent loaded but endpoint is not ready yet. Check $PI_RAPID_LOG_DIR/rapid-mlx.err.log"
   fi
+else
+  warn "LaunchAgent plist created but could not be registered in this session: $PI_RAPID_LAUNCH_AGENT"
 fi
 
-info "Starting local model server..."
-launchctl bootout "gui/$(id -u)" "$PI_LAUNCH_AGENT" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/$(id -u)" "$PI_LAUNCH_AGENT" >/dev/null 2>&1 || true
-launchctl enable "gui/$(id -u)/$PI_LAUNCH_LABEL" >/dev/null 2>&1 || true
-launchctl kickstart -k "gui/$(id -u)/$PI_LAUNCH_LABEL" >/dev/null 2>&1 || true
-
-_timeout=30
-while ! curl -sf "http://$PI_HOST:$PI_PORT/v1/models" >/dev/null 2>&1; do
-  sleep 1
-  _timeout=$((_timeout - 1))
-  [ "$_timeout" -gt 0 ] || die "Local model server did not answer on $PI_HOST:$PI_PORT. Check $LOCAL_AGENT_CONFIG_DIR/logs/llama-server.err.log"
-done
-
-ok "Local model server is ready."
-printf '\n================================================\n'
-printf '  Aider + Qwen 3.6 Setup Complete\n'
-printf '================================================\n\n'
-printf '  Commands: aider  or  %s\n' "$LOCAL_AGENT_WRAPPER"
-printf '  Model   : openai/%s\n' "$PI_MODEL_ID"
-printf '  Server  : http://%s:%s/v1\n' "$PI_HOST" "$PI_PORT"
-printf '  Context : %s\n' "$PI_CONTEXT"
-printf '  Parallel: %s\n' "$PI_PARALLEL"
-printf '  Reason  : %s\n' "$LOCAL_AGENT_REASONING"
-printf '  Config  : %s\n' "$AIDER_CONFIG_FILE"
-printf '  GGUF    : %s\n\n' "$PI_SHARED_MODEL"
+printf '\n%sSetup complete in %s.%s\n' "$C_GREEN" "$(elapsed)" "$C_RESET"
+printf '  Provider : %s\n' "$PI_DEFAULT_PROVIDER"
+printf '  Model    : %s\n' "$PI_DEFAULT_MODEL"
+printf '  Endpoint : %s\n' "$PI_RAPID_BASE_URL"
+printf '  Port     : %s (loopback only; installer checks for conflicts)\n' "$PI_RAPID_PORT"
+printf '  Launch   : %s\n' "$PI_RAPID_LAUNCH_AGENT"
+printf '  Command  : pi --offline\n'

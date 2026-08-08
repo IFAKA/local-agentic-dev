@@ -1,114 +1,124 @@
-# Aider + Qwen 3.6 Local Setup
+# Pi + Rapid-MLX Local Coding Harness
 
-Local setup for the `aider` coding agent using a dedicated `llama-server` endpoint:
+[![Validate](https://github.com/IFAKA/local-agentic-dev/actions/workflows/validate.yml/badge.svg)](https://github.com/IFAKA/local-agentic-dev/actions/workflows/validate.yml)
 
-- **Machine:** Apple Silicon `Mac16,8`
-- **Memory target:** 48 GB unified memory
-- **Aider model:** `openai/qwen3.6-27b-reasoning`
-- **Server:** `http://127.0.0.1:11435/v1`
-- **Model file:** `Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf`
-- **Default context:** `32768`
+An offline local coding-agent setup for Apple Silicon Macs: Pi uses Rapid-MLX
+to run Qwen3.6-35B-A3B-NVFP4 entirely on-device. It is designed for an M4 Pro
+with 48 GB unified memory and keeps inference on loopback with no cloud
+fallbacks.
 
-The installer reuses one shared GGUF across macOS users, so the same 21GB model file is not duplicated per account. It also disables the older `ollama.custom` LaunchAgent if present, because that legacy service starts a second `llama-server` on the same port.
+This project runs the `pi` coding agent through one local inference runtime: Rapid-MLX on Apple Silicon. There are no provider fallbacks in the supported setup.
+
+- **Machine target:** Apple Silicon Mac with 48 GB unified memory
+- **Runtime:** Rapid-MLX
+- **Endpoint:** `http://127.0.0.1:8000/v1`
+- **Port policy:** loopback-only port 8000; the installer refuses to start if it is occupied
+- **Model:** `mlx-community/Qwen3.6-35B-A3B-nvfp4`
+- **Pi command:** `pi --offline`
+- **Context:** 98,304 tokens
+
+## Why this project
+
+Use this when you want a practical local coding agent with no API bill,
+network dependency, or provider failover. Rapid-MLX supplies the MLX runtime;
+Pi supplies the terminal coding-agent workflow; this repository connects them
+with a single reproducible LaunchAgent configuration.
+
+## Compatibility
+
+| Component | Supported target |
+| --- | --- |
+| Hardware | Apple Silicon Mac, 48 GB unified memory recommended |
+| Operating system | macOS |
+| Agent | Pi `0.84.1` |
+| Runtime | Rapid-MLX `0.12.x` or compatible |
+| Model | `mlx-community/Qwen3.6-35B-A3B-nvfp4` |
+| Network | Not required after dependencies and model are available |
+
+The installer requires at least 40 GB unified memory and 20 GB free disk by
+default. Use `./doctor.sh` to see which prerequisite is blocking readiness.
 
 ## Install
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/IFAKA/local-agentic-dev/main/install.sh | sh
-```
-
-For local testing from a clone:
-
-```sh
+brew install rapid-mlx
 ./install.sh
 ```
 
-## Important: First Run
-
-Run the installer first from the macOS user that already has the GGUF. On this machine it is currently:
+The installer registers Rapid-MLX as a user LaunchAgent and starts it at login. To start or restart it manually:
 
 ```sh
-/Users/faka/.ollama-pi-qwen36/Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf
+scripts/serve-rapid-mlx-qwen36.sh
 ```
 
-The installer copies it into shared storage:
+After installation or login, `pi --offline` is the only command needed.
+
+The installer displays numbered phases, elapsed time, tool/configuration status, and live model-readiness progress. It remains non-interactive, so it can also be used from scripts or redirected logs.
+
+Before installing, run the read-only readiness report:
 
 ```sh
-/Users/Shared/pi-qwen36/Qwen3.6-27B-Claude-Opus-Reasoning-Distill.q6_k.gguf
+./doctor.sh
 ```
 
-Then run the installer from the other macOS user. That second user will reuse the shared GGUF and create its own per-user Aider config and LaunchAgent.
+The installer fails before writing anything when headroom is unsafe; adjust
+`PI_MIN_FREE_GB` only for a controlled test. Existing Pi files are backed up
+once. No Ollama, OpenCode, Aider, or cloud provider is installed or configured.
 
-## What Gets Installed
-
-- `aider` CLI if it is not already installed
-- `llama-server` via Homebrew `llama.cpp`
-- `~/Library/LaunchAgents/com.faka.pi-qwen36.plist`
-- `~/.config/local-agentic-dev/aider.conf.yml`
-- `~/.config/local-agentic-dev/aider.env`
-- `~/.local/bin/local-code` wrapper
-- `~/.aider.conf.yml` so plain `aider` uses the local model by default
-- `~/.config/local-agentic-dev/install-manifest`
-
-Existing `~/.aider.conf.yml` is backed up before replacement. The installer removes the Pi CLI by default because this setup is Aider-first.
-
-## Usage
+Verify it before launching Pi:
 
 ```sh
-aider
-# or
-local-code
+curl -sf http://127.0.0.1:8000/v1/models
+pi -p --no-tools --offline "Reply with exactly: LOCAL_PI_OK"
 ```
 
-The generated Aider config uses:
+Only Rapid-MLX needs to be running. Do not run multiple local model servers at once; they compete for unified memory.
 
-```text
-provider: OpenAI-compatible llama.cpp
-model: openai/qwen3.6-27b-reasoning
-baseUrl: http://127.0.0.1:11435/v1
-contextWindow: 32768
-maxTokens: 8192
-parallelSlots: 1
-reasoning: off by default for lower transcript/context noise
-config: ~/.config/local-agentic-dev/aider.conf.yml
-```
+## Configuration
 
-## Options
+The installer writes one provider to `~/.pi/agent/models.json` and selects it in `~/.pi/agent/settings.json`. Existing Pi configuration is backed up once before replacement.
 
-Use a different shared model directory:
+Supported overrides:
 
 ```sh
-PI_SHARED_DIR=/Volumes/FastSSD/pi-qwen36 ./install.sh
+PI_RAPID_PORT=18000 PI_RAPID_BASE_URL=http://127.0.0.1:18000/v1 ./install.sh
+PI_RAPID_MODEL=mlx-community/Qwen3.6-35B-A3B-nvfp4 ./install.sh
+PI_CONTEXT=98304 PI_MAX_TOKENS=12288 ./install.sh
 ```
 
-Use a different model id:
+Normal coding disables model thinking. Use `./install.sh --deep-reasoning` (or `PI_PROFILE=deep-reasoning` / `PI_THINKING=on`) when a session explicitly needs the Rapid-MLX reasoning profile; rerun the normal install to return to the default.
+
+The selected 4-bit model is appropriate for this Mac’s 48 GB memory. Keep one server sequence for the single-user Pi workflow.
+
+## Benchmarking
+
+Run the project benchmark only while Rapid-MLX is serving:
 
 ```sh
-PI_MODEL_ID=qwen3.6-27b-reasoning ./install.sh
+scripts/benchmark-frontier.py --profile rapid-mlx --runs 3
 ```
 
-Download the GGUF once if it is not already present locally:
+The benchmark records visible-output correctness, tool-call success, latency,
+decode throughput, 64K/98K/larger context probes, memory pressure, and
+available disk under `bench/results/`. Large context probes can consume
+substantial unified memory; check `./doctor.sh` first.
 
-```sh
-PI_GGUF_URL=https://example.com/model.gguf ./install.sh
-```
+Historical Ollama/OpenCode measurements are retained only as archive material; they are not supported runtime paths or fallbacks.
 
-Tune for another machine:
+## Troubleshooting
 
-```sh
-PI_CONTEXT=16384 PI_PARALLEL=1 ./install.sh   # 24-32 GB machines
-PI_CONTEXT=32768 PI_PARALLEL=1 ./install.sh   # 48 GB default
-PI_CONTEXT=65536 PI_PARALLEL=1 ./install.sh   # 64 GB+ after testing
-PI_DISABLE_LEGACY_AGENTS=false ./install.sh    # keep old LaunchAgents if you manage ports yourself
-```
+- Run `./doctor.sh` to separate hardware, disk, Pi version, Rapid-MLX, and server-readiness issues.
+- If the endpoint is not ready, inspect `~/.config/local-agentic-dev/logs/rapid-mlx.err.log`.
+- If port 8000 is occupied, set `PI_RAPID_PORT` and a matching `PI_RAPID_BASE_URL`, then rerun the installer.
+- If a long-context probe fails, return to the default 98,304-token context and verify available disk and memory.
+- `./uninstall.sh` removes only this harness’s LaunchAgent and restores Pi backups; it does not delete model caches or unrelated local tools.
 
-Use a larger context only if you have tested memory pressure:
+## Project status
 
-```sh
-PI_CONTEXT=65536 ./install.sh
-```
-
-The default stays at `32768` because it is conservative for a 27B Q6 model on a 48 GB Mac.
+This project supports one local runtime path: Pi + Rapid-MLX. Contributions
+that add cloud fallback providers or a second active model server are outside
+the supported architecture. See [CONTRIBUTING.md](CONTRIBUTING.md) before
+opening a pull request.
 
 ## Uninstall
 
@@ -116,28 +126,4 @@ The default stays at `32768` because it is conservative for a 27B Q6 model on a 
 ./uninstall.sh
 ```
 
-Uninstall removes generated configs and restores backups, but it keeps the shared GGUF by default so another macOS user is not broken.
-
-## Device Tuning Notes
-
-The installer is tuned for a 48 GB Apple Silicon Mac by default: Qwen 3.6 27B Q6, 32K context, 8K max output, and one llama.cpp server slot (`-np 1`). One slot is intentional for local coding because parallel slots multiply KV-cache pressure without helping a single Aider session.
-
-Aider is configured through `~/.config/local-agentic-dev/aider.conf.yml`. To change models later, rerun the installer with `PI_MODEL_ID=... PI_MODEL_FILE=...` or edit that config once. You do not need to rewrite aliases or remember the full `aider --model ...` command. The server defaults to `LOCAL_AGENT_REASONING=off` because Aider stores chat history and visible thinking wastes context; use `LOCAL_AGENT_REASONING=on ./install.sh` only when you want a noisier reasoning profile.
-
-## Benchmarking The Frontier
-
-The installer default is a hypothesis, not proof. To measure the device-specific frontier, keep the local model server running and run:
-
-```sh
-scripts/benchmark-frontier.py --runs 3
-```
-
-The benchmark writes JSONL and CSV files under `bench/results/`. Compare profiles by changing one variable at a time:
-
-```sh
-PI_CONTEXT=16384 ./install.sh && scripts/benchmark-frontier.py --runs 3
-PI_CONTEXT=32768 ./install.sh && scripts/benchmark-frontier.py --runs 3
-PI_CONTEXT=65536 ./install.sh && scripts/benchmark-frontier.py --runs 3
-```
-
-For quant sweeps, install the same model family at Q4/Q5/Q6/Q8 or IQ variants, rerun the installer with `PI_MODEL_FILE=...`, and compare pass rate, median latency, prompt tok/s, decode tok/s, context, slots, and memory pressure. A profile is on the efficient frontier only if no other tested profile is both faster/lighter and at least as reliable on the same prompts and project tasks.
+Uninstall stops and removes the Rapid-MLX LaunchAgent and restores the backed-up Pi configuration. It does not remove the Rapid-MLX Homebrew package or downloaded model cache.
