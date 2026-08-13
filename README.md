@@ -49,9 +49,11 @@ installer and gets separate Little Coder configuration and a separate
 LaunchAgent, while Rapid-MLX reads the shared model. Set
 `NAIL_SHARED_MODEL_DIR` to use another shared location.
 
-The installer also reuses a shared Rapid-MLX installation at
-`/Users/Shared/LLM-Tools/rapid-mlx/bin` when present. Little Coder is installed
-per user because its CLI configuration and shell integration are user-specific.
+The installer reuses a working shared Rapid-MLX installation at
+`/Users/Shared/LLM-Tools/rapid-mlx/bin` when available. If that installation
+belongs to another user or cannot run for the current user, the installer
+automatically installs a user-local copy. Little Coder is installed per user
+because its CLI configuration and shell integration are user-specific.
 
 Ollama does not automatically discover or reuse MLX/Hugging Face model files;
 its model store and format are separate.

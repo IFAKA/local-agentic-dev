@@ -35,11 +35,12 @@ info() { printf '[%s] %s\n' "$(( $(date +%s) - START_TIME ))s" "$*"; }
 ok() { printf '[%s] ✓ %s\n' "$(( $(date +%s) - START_TIME ))s" "$*"; }
 die() { printf '[%s] ✗ %s\n' "$(( $(date +%s) - START_TIME ))s" "$*" >&2; exit 1; }
 
-# Reuse a shared Rapid-MLX installation before looking for a user-local one.
-if [ -x "$SHARED_RAPID_MLX_BIN/rapid-mlx" ]; then
-  PATH="$SHARED_RAPID_MLX_BIN:$PATH"
-  export PATH
-fi
+rapid_mlx_works() {
+  candidate="$1"
+  [ -x "$candidate" ] && "$candidate" --help >/dev/null 2>&1
+}
+
+RAPID_MLX_BIN=""
 
 case "$(uname -s):$(uname -m)" in
   Darwin:arm64) ;;
@@ -61,24 +62,37 @@ NODE_MAJOR="$(node --version | sed 's/^v//' | cut -d. -f1)"
 [ "$NODE_MAJOR" -ge 22 ] || die "Node.js 22.19+ is required; found $(node --version)."
 
 info "Installing/updating Rapid-MLX"
-if command -v rapid-mlx >/dev/null 2>&1; then
+if command -v rapid-mlx >/dev/null 2>&1 && rapid_mlx_works "$(command -v rapid-mlx)"; then
+  RAPID_MLX_BIN="$(command -v rapid-mlx)"
   info "Rapid-MLX already available; keeping the installed version"
-elif [ -x "$SHARED_RAPID_MLX_BIN/rapid-mlx" ]; then
-  PATH="$SHARED_RAPID_MLX_BIN:$PATH"
-  export PATH
+elif [ -x "$SHARED_RAPID_MLX_BIN/rapid-mlx" ] && rapid_mlx_works "$SHARED_RAPID_MLX_BIN/rapid-mlx"; then
+  RAPID_MLX_BIN="$SHARED_RAPID_MLX_BIN/rapid-mlx"
   info "Using shared Rapid-MLX installation"
 elif command -v brew >/dev/null 2>&1 && brew list --formula rapid-mlx >/dev/null 2>&1; then
   BREW_PREFIX="$(brew --prefix)"
-  PATH="$BREW_PREFIX/bin:$PATH"
-  export PATH
+  if rapid_mlx_works "$BREW_PREFIX/bin/rapid-mlx"; then
+    RAPID_MLX_BIN="$BREW_PREFIX/bin/rapid-mlx"
+  fi
 elif command -v brew >/dev/null 2>&1 && [ -w "$(brew --prefix)" ]; then
   brew install rapid-mlx
-elif command -v uv >/dev/null 2>&1; then
-  uv tool install rapid-mlx
-else
-  die "Rapid-MLX is missing. Install it with Homebrew or uv (https://github.com/raullenchai/Rapid-MLX)."
+  BREW_PREFIX="$(brew --prefix)"
+  if rapid_mlx_works "$BREW_PREFIX/bin/rapid-mlx"; then
+    RAPID_MLX_BIN="$BREW_PREFIX/bin/rapid-mlx"
+  fi
 fi
-command -v rapid-mlx >/dev/null 2>&1 || die "Rapid-MLX CLI is not on PATH."
+if [ -z "$RAPID_MLX_BIN" ] && command -v uv >/dev/null 2>&1; then
+  info "Installing a user-local Rapid-MLX because no usable shared installation was found"
+  uv tool install --force rapid-mlx
+  USER_LOCAL_BIN="$HOME/.local/bin/rapid-mlx"
+  if rapid_mlx_works "$USER_LOCAL_BIN"; then
+    RAPID_MLX_BIN="$USER_LOCAL_BIN"
+  fi
+fi
+[ -n "$RAPID_MLX_BIN" ] || die "Rapid-MLX is missing or unusable. Install it with Homebrew or uv (https://github.com/raullenchai/Rapid-MLX)."
+RAPID_MLX_BIN="$(cd "$(dirname "$RAPID_MLX_BIN")" && pwd)/$(basename "$RAPID_MLX_BIN")"
+PATH="$(dirname "$RAPID_MLX_BIN"):$PATH"
+export PATH
+ok "Rapid-MLX executable validated: $RAPID_MLX_BIN"
 
 info "Installing/updating Little Coder"
 NPM_GLOBAL_PREFIX="$(npm prefix -g 2>/dev/null || true)"
@@ -168,7 +182,7 @@ cat > "$LAUNCH_AGENT" <<EOF_PLIST
 <plist version="1.0"><dict>
   <key>Label</key><string>$LAUNCH_LABEL</string>
   <key>ProgramArguments</key><array>
-    <string>$(command -v rapid-mlx)</string><string>serve</string><string>$MODEL_DIR</string><string>--served-model-name</string><string>$MODEL_ID</string>
+    <string>$RAPID_MLX_BIN</string><string>serve</string><string>$MODEL_DIR</string><string>--served-model-name</string><string>$MODEL_ID</string>
     <string>--host</string><string>127.0.0.1</string><string>--port</string><string>$PORT</string>
     <string>--max-num-seqs</string><string>1</string><string>--max-concurrent-requests</string><string>1</string>
     <string>--enable-auto-tool-choice</string><string>--tool-call-parser</string><string>qwen3</string>
@@ -186,6 +200,7 @@ harness=little-coder-nail-rapid-mlx
 little_coder_models=$LITTLE_CODER_MODELS_FILE
 rapid_mlx_launch_agent=$LAUNCH_AGENT
 rapid_mlx_launch_label=$LAUNCH_LABEL
+rapid_mlx_bin=$RAPID_MLX_BIN
 rapid_mlx_port=$PORT
 rapid_mlx_base_url=$BASE_URL
 nail_model_dir=$MODEL_DIR
