@@ -3,7 +3,21 @@
 set -eu
 
 START_TIME=$(date +%s)
-MODEL_DIR="${NAIL_MODEL_DIR:-$HOME/.cache/huggingface/hub/peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-MLX}"
+DEFAULT_MODEL_DIR="$HOME/.cache/huggingface/hub/peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-MLX"
+SHARED_MODEL_DIR="${NAIL_SHARED_MODEL_DIR:-/Users/Shared/LLM-Models/Nail-Qwen3.6-35B-A3B-MLX}"
+SHARED_RAPID_MLX_BIN="${NAIL_SHARED_RAPID_MLX_BIN:-/Users/Shared/LLM-Tools/rapid-mlx/bin}"
+if [ "${NAIL_MODEL_DIR+x}" = x ]; then
+  MODEL_DIR="$NAIL_MODEL_DIR"
+elif [ -d "$DEFAULT_MODEL_DIR" ]; then
+  MODEL_DIR="$DEFAULT_MODEL_DIR"
+else
+  MODEL_DIR="$SHARED_MODEL_DIR"
+fi
+# Give each user a familiar Hugging Face-style path without copying the model.
+if [ "$MODEL_DIR" = "$SHARED_MODEL_DIR" ] && [ ! -e "$DEFAULT_MODEL_DIR" ] && [ ! -L "$DEFAULT_MODEL_DIR" ]; then
+  mkdir -p "$(dirname "$DEFAULT_MODEL_DIR")"
+  ln -s "$SHARED_MODEL_DIR" "$DEFAULT_MODEL_DIR"
+fi
 CONFIG_DIR="${LOCAL_AGENT_CONFIG_DIR:-$HOME/.config/local-agentic-dev}"
 LITTLE_CODER_CONFIG_DIR="${LITTLE_CODER_CONFIG_DIR:-$HOME/.config/little-coder}"
 LITTLE_CODER_MODELS_FILE="$LITTLE_CODER_CONFIG_DIR/models.json"
@@ -21,6 +35,12 @@ info() { printf '[%s] %s\n' "$(( $(date +%s) - START_TIME ))s" "$*"; }
 ok() { printf '[%s] ✓ %s\n' "$(( $(date +%s) - START_TIME ))s" "$*"; }
 die() { printf '[%s] ✗ %s\n' "$(( $(date +%s) - START_TIME ))s" "$*" >&2; exit 1; }
 
+# Reuse a shared Rapid-MLX installation before looking for a user-local one.
+if [ -x "$SHARED_RAPID_MLX_BIN/rapid-mlx" ]; then
+  PATH="$SHARED_RAPID_MLX_BIN:$PATH"
+  export PATH
+fi
+
 case "$(uname -s):$(uname -m)" in
   Darwin:arm64) ;;
   *) die "Apple Silicon macOS is required." ;;
@@ -29,6 +49,13 @@ esac
 [ -f "$MODEL_DIR/config.json" ] || die "Nail model is missing config.json: $MODEL_DIR"
 [ -f "$MODEL_DIR/tokenizer.json" ] || die "Nail model is missing tokenizer.json: $MODEL_DIR"
 
+if ! command -v node >/dev/null 2>&1 && command -v brew >/dev/null 2>&1; then
+  info "Installing shared Homebrew Node.js"
+  brew list --formula node >/dev/null 2>&1 || brew install node
+  BREW_PREFIX="$(brew --prefix)"
+  PATH="$BREW_PREFIX/bin:$PATH"
+  export PATH
+fi
 command -v node >/dev/null 2>&1 || die "Node.js 22.19+ is required for Little Coder."
 NODE_MAJOR="$(node --version | sed 's/^v//' | cut -d. -f1)"
 [ "$NODE_MAJOR" -ge 22 ] || die "Node.js 22.19+ is required; found $(node --version)."
@@ -36,8 +63,14 @@ NODE_MAJOR="$(node --version | sed 's/^v//' | cut -d. -f1)"
 info "Installing/updating Rapid-MLX"
 if command -v rapid-mlx >/dev/null 2>&1; then
   info "Rapid-MLX already available; keeping the installed version"
+elif [ -x "$SHARED_RAPID_MLX_BIN/rapid-mlx" ]; then
+  PATH="$SHARED_RAPID_MLX_BIN:$PATH"
+  export PATH
+  info "Using shared Rapid-MLX installation"
 elif command -v brew >/dev/null 2>&1 && brew list --formula rapid-mlx >/dev/null 2>&1; then
-  brew upgrade rapid-mlx >/dev/null 2>&1 || true
+  BREW_PREFIX="$(brew --prefix)"
+  PATH="$BREW_PREFIX/bin:$PATH"
+  export PATH
 elif command -v brew >/dev/null 2>&1 && [ -w "$(brew --prefix)" ]; then
   brew install rapid-mlx
 elif command -v uv >/dev/null 2>&1; then
@@ -48,7 +81,17 @@ fi
 command -v rapid-mlx >/dev/null 2>&1 || die "Rapid-MLX CLI is not on PATH."
 
 info "Installing/updating Little Coder"
-npm install -g little-coder
+NPM_GLOBAL_PREFIX="$(npm prefix -g 2>/dev/null || true)"
+if [ -n "$NPM_GLOBAL_PREFIX" ] && [ -w "$NPM_GLOBAL_PREFIX" ]; then
+  npm install -g little-coder
+else
+  # Homebrew is shared but normally writable only by its owning admin user;
+  # keep the CLI itself user-local while reusing the shared model/runtime.
+  mkdir -p "$HOME/.local"
+  npm install -g --prefix "$HOME/.local" little-coder
+  PATH="$HOME/.local/bin:$PATH"
+  export PATH
+fi
 command -v little-coder >/dev/null 2>&1 || die "Little Coder CLI is not on PATH."
 
 mkdir -p "$CONFIG_DIR" "$LITTLE_CODER_CONFIG_DIR" "$HOME/Library/LaunchAgents" "$LOG_DIR"
@@ -69,7 +112,9 @@ const path = require('path');
 const file = process.env.LITTLE_CODER_MODELS_FILE || path.join(process.env.HOME, '.config/little-coder/models.json');
 fs.mkdirSync(path.dirname(file), { recursive: true });
 const config = {
-  default: `rapid-mlx/${process.env.MODEL_ID}`,
+  // Pi/Little Coder accepts a thinking suffix on the default model selector.
+  // Keep reasoning available, but start new sessions with it disabled.
+  default: `rapid-mlx/${process.env.MODEL_ID}:off`,
   providers: {
     'rapid-mlx': {
       api: 'openai-completions',
@@ -90,6 +135,32 @@ const config = {
 fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
 EOF_NODE
 ok "Little Coder provider configured: rapid-mlx/$MODEL_ID"
+
+# Little Coder v1.14 currently forces interactive launches to medium unless
+# --thinking is present on the command line. Keep the local setup off by
+# default while preserving explicit --thinking and --model ...:level choices.
+ZSHRC="$HOME/.zshrc"
+ZSH_MARKER="# local-agentic-dev: Little Coder thinking default"
+if [ ! -f "$ZSHRC" ] || ! grep -Fq "$ZSH_MARKER" "$ZSHRC"; then
+  cat >> "$ZSHRC" <<'EOF_ZSH'
+
+# local-agentic-dev: Little Coder thinking default
+little-coder() {
+  local arg previous=""
+  for arg in "$@"; do
+    if [[ "$arg" == "--thinking" || ( "$previous" == "--model" && "$arg" == *:* ) ]]; then
+      command little-coder "$@"
+      return
+    fi
+    previous="$arg"
+  done
+  command little-coder --thinking off "$@"
+}
+EOF_ZSH
+  ok "Little Coder interactive default: thinking off"
+else
+  info "Little Coder interactive default already configured or ~/.zshrc is absent"
+fi
 
 cat > "$LAUNCH_AGENT" <<EOF_PLIST
 <?xml version="1.0" encoding="UTF-8"?>

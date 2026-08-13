@@ -2,7 +2,15 @@
 # doctor.sh - read-only Little Coder + Nail + Rapid-MLX readiness check
 set -u
 
-MODEL_DIR="${NAIL_MODEL_DIR:-$HOME/.cache/huggingface/hub/peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-MLX}"
+DEFAULT_MODEL_DIR="$HOME/.cache/huggingface/hub/peculiar-ragdoll/Nail-Qwen3.6-35B-A3B-MLX"
+SHARED_MODEL_DIR="${NAIL_SHARED_MODEL_DIR:-/Users/Shared/LLM-Models/Nail-Qwen3.6-35B-A3B-MLX}"
+if [ "${NAIL_MODEL_DIR+x}" = x ]; then
+  MODEL_DIR="$NAIL_MODEL_DIR"
+elif [ -d "$DEFAULT_MODEL_DIR" ]; then
+  MODEL_DIR="$DEFAULT_MODEL_DIR"
+else
+  MODEL_DIR="$SHARED_MODEL_DIR"
+fi
 CONFIG_DIR="${LOCAL_AGENT_CONFIG_DIR:-$HOME/.config/local-agentic-dev}"
 BASE_URL="${RAPID_MLX_BASE_URL:-http://127.0.0.1:${RAPID_MLX_PORT:-8000}/v1}"
 MODEL_ID="${NAIL_MODEL_ID:-nail-qwen3.6-35b-a3b}"
