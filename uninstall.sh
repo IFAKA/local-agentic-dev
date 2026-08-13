@@ -29,6 +29,11 @@ elif [ -n "$label" ]; then
 fi
 
 restore "$(get little_coder_models)"
+pi_compat="$(get pi_compat)"
+if [ -n "$pi_compat" ] && [ -f "$pi_compat" ] && grep -Fq 'Compatibility command for Little Coder' "$pi_compat"; then
+  rm -f "$pi_compat"
+  printf 'Removed generated %s\n' "$pi_compat"
+fi
 rm -f "$MANIFEST"
 rmdir "$MANIFEST_DIR" 2>/dev/null || true
 printf '%s\n' 'Removed generated Little Coder/Rapid-MLX wiring.'

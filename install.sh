@@ -108,6 +108,18 @@ else
 fi
 command -v little-coder >/dev/null 2>&1 || die "Little Coder CLI is not on PATH."
 
+# Pi's own update banner refers to a `pi` executable. Little Coder bundles Pi
+# internally, so install a compatibility command that makes that instruction
+# work without exposing the bundled dependency as a second agent installation.
+LOCAL_BIN="$HOME/.local/bin"
+mkdir -p "$LOCAL_BIN"
+if [ ! -e "$LOCAL_BIN/pi" ]; then
+  install -m 0755 "$(dirname "$0")/scripts/pi" "$LOCAL_BIN/pi"
+  ok "Installed Pi compatibility command: $LOCAL_BIN/pi"
+else
+  info "Keeping existing $LOCAL_BIN/pi"
+fi
+
 mkdir -p "$CONFIG_DIR" "$LITTLE_CODER_CONFIG_DIR" "$HOME/Library/LaunchAgents" "$LOG_DIR"
 
 backup_once() {
@@ -198,6 +210,7 @@ EOF_PLIST
 cat > "$MANIFEST" <<EOF_MANIFEST
 harness=little-coder-nail-rapid-mlx
 little_coder_models=$LITTLE_CODER_MODELS_FILE
+pi_compat=$LOCAL_BIN/pi
 rapid_mlx_launch_agent=$LAUNCH_AGENT
 rapid_mlx_launch_label=$LAUNCH_LABEL
 rapid_mlx_bin=$RAPID_MLX_BIN

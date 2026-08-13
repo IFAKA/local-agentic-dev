@@ -1,0 +1,43 @@
+#!/bin/sh
+# Compatibility command for Little Coder's bundled Pi runtime.
+# Pi's package-manager messages refer to a `pi` executable, but Little Coder
+# intentionally keeps Pi as an internal dependency.
+set -eu
+
+little_coder="$(command -v little-coder 2>/dev/null || true)"
+[ -n "$little_coder" ] || {
+  printf '%s\n' 'pi compatibility command: little-coder is not on PATH.' >&2
+  exit 127
+}
+
+launcher="$(node -e 'console.log(require("fs").realpathSync(process.argv[1]))' "$little_coder")"
+package_root="$(cd "$(dirname "$launcher")/.." && pwd -P)"
+pi_cli="$package_root/node_modules/@earendil-works/pi-coding-agent/dist/cli.js"
+
+if [ ! -f "$pi_cli" ]; then
+  printf '%s\n' "pi compatibility command: bundled Pi was not found at $pi_cli" >&2
+  printf '%s\n' 'Reinstall Little Coder with: npm install -g little-coder' >&2
+  exit 1
+fi
+
+# Package-manager operations must bypass Little Coder's launch flags. All
+# other invocations keep Little Coder's model, prompt, and extension setup.
+case "${1:-}" in
+  update)
+    # Make the banner's suggested command the one-command developer workflow:
+    # update Little Coder first, then update its user-installed extensions.
+    # Derive the npm prefix from the active Little Coder installation so this
+    # works for both ~/.local and Homebrew-style global installs.
+    npm_prefix="$(cd "$package_root/../../.." && pwd -P)"
+    npm install -g --prefix "$npm_prefix" little-coder@latest
+    launcher="$(node -e 'console.log(require("fs").realpathSync(process.argv[1]))' "$(command -v little-coder)")"
+    package_root="$(cd "$(dirname "$launcher")/.." && pwd -P)"
+    exec node "$package_root/node_modules/@earendil-works/pi-coding-agent/dist/cli.js" update --extensions
+    ;;
+  install|remove|uninstall|list|config|auth)
+    exec node "$pi_cli" "$@"
+    ;;
+  *)
+    exec little-coder "$@"
+    ;;
+esac

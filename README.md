@@ -20,6 +20,18 @@ If that path is absent, it automatically uses the shared model path:
 little-coder
 ```
 
+The installer also provides a `pi` compatibility command because Pi's update
+message refers to `pi` even though Little Coder bundles Pi internally. Update
+Little Coder and all installed extensions with:
+
+```sh
+pi update --extensions
+```
+
+Normal `pi` invocations are routed to Little Coder. The `update` command first
+updates Little Coder itself and then its installed extensions; other
+package-management commands are sent directly to the bundled Pi runtime.
+
 The configured model handle is `rapid-mlx/nail-qwen3.6-35b-a3b`.
 
 The installer also configures bare `little-coder` to start interactive
