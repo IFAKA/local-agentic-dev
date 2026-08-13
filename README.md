@@ -60,6 +60,26 @@ Little Coder’s provider file is written to `~/.config/little-coder/models.json
 
 Nail’s model card recommends temperature 0.7 for agentic coding. Rapid-MLX is started with thinking disabled for normal coding. The model’s native context is 262,144 tokens; this harness defaults to 98,304 to leave memory headroom.
 
+## Measured benchmark baseline
+
+These are measured results from the supported setup on a MacBook Pro with an
+M4 Pro and 48 GB unified memory. They are a practical reference for this
+device, not a guaranteed minimum for every Mac.
+
+| Test | Result |
+| --- | ---: |
+| Short answer | 0.7 s |
+| Review code | 2.2 s / 47 tok/s |
+| Make a plan | 2.5 s / 49 tok/s |
+| Use a tool | 1.5 s / 14 tok/s |
+| Readiness smoke test | 8/8 passed |
+| 64K context response | 1m 57s |
+| 98K context response | 3m 44s |
+
+Short replies include startup time, and tool-use speed is lower because it
+includes tool-call overhead. Results vary with context size, temperature,
+background workloads, and Rapid-MLX version.
+
 ## Uninstall
 
 ```sh
