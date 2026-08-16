@@ -1,0 +1,122 @@
+#!/bin/sh
+set -eu
+
+SOURCE="$0"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(CDPATH= cd -- "$(dirname -- "$SOURCE")" && pwd)"
+  TARGET="$(readlink "$SOURCE")"
+  case "$TARGET" in /*) SOURCE="$TARGET";; *) SOURCE="$SOURCE_DIR/$TARGET";; esac
+done
+SOURCE_DIR="$(CDPATH= cd -- "$(dirname -- "$SOURCE")" && pwd)"
+ROOT="$(CDPATH= cd -- "$SOURCE_DIR/.." && pwd)"
+LOCAL_AGENT_REPO_ROOT="$ROOT"
+export LOCAL_AGENT_REPO_ROOT
+. "$ROOT/lib/config.sh"
+
+die() { printf 'local-agent: %s\n' "$*" >&2; exit 1; }
+rapid_bin() { [ -x "$RAPID_MLX_BIN" ] && printf '%s\n' "$RAPID_MLX_BIN" || die "Rapid-MLX is not installed; run ./install.sh"; }
+metal_preflight() {
+  rapid="$1"
+  python="$(sed -n '1s/^#!//p' "$rapid" 2>/dev/null || true)"
+  [ -x "$python" ] || python="$(command -v python3 2>/dev/null || true)"
+  [ -x "$python" ] || die "Python runtime for Rapid-MLX is unavailable"
+  if ! "$python" -c 'import mlx.core as mx; mx.eval(mx.array(0))' >/dev/null 2>"$LOG_DIR/metal-preflight.err.log"; then
+    printf '%s\n' "Rapid-MLX cannot access the Metal GPU in this process." >&2
+    printf '%s\n' "Run local-agent from a normal interactive Terminal session, not a sandboxed/CI/remote shell." >&2
+    printf '%s\n' "Diagnostic: $LOG_DIR/metal-preflight.err.log" >&2
+    return 1
+  fi
+}
+pid_value() { [ -f "$PID_FILE" ] && tr -cd '0-9' < "$PID_FILE" || true; }
+pid_command() { ps -p "$1" -o command= 2>/dev/null || true; }
+is_ours() {
+  p="$1"; command="$(pid_command "$p")"
+  [ -n "$command" ] && printf '%s\n' "$command" | grep -Fq 'rapid-mlx serve' \
+    && printf '%s\n' "$command" | grep -Fq "$MODEL_REPO"
+}
+server_pid() {
+  p="$(pid_value)"
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null && is_ours "$p" && printf '%s\n' "$p"
+}
+wait_ready() {
+  pid="$1"
+  i=0
+  while [ "$i" -lt 120 ]; do
+    if curl -fsS --max-time 2 "$BASE_URL/models" >/dev/null 2>&1; then return 0; fi
+    kill -0 "$pid" 2>/dev/null || return 1
+    i=$((i + 1)); sleep 1
+  done
+  return 1
+}
+start() {
+  if p="$(server_pid)"; then printf 'Rapid-MLX already running (PID %s)\n' "$p"; return 0; fi
+  stale="$(pid_value)"; [ -z "$stale" ] || rm -f "$PID_FILE"
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then die "port $PORT is already in use by a process not owned by local-agent"; fi
+  mkdir -p "$STATE_DIR" "$LOG_DIR"
+  rapid="$(rapid_bin)"
+  metal_preflight "$rapid" || return 1
+  printf 'Starting %s on %s (model load may take a while)\n' "$MODEL_REPO" "$BASE_URL"
+  nohup "$rapid" serve "$MODEL_REPO" --served-model-name "$MODEL_ID" \
+    --host "$HOST" --port "$PORT" --max-num-seqs 1 --max-concurrent-requests 1 \
+    --enable-auto-tool-choice --tool-call-parser "$TOOL_CALL_PARSER" \
+    --reasoning-parser "$REASONING_PARSER" --max-tokens "$MAX_OUTPUT" \
+    >"$LOG_DIR/rapid-mlx.log" 2>"$LOG_DIR/rapid-mlx.err.log" &
+  p=$!; tmp="$PID_FILE.tmp.$$"; printf '%s\n' "$p" > "$tmp" && mv -f "$tmp" "$PID_FILE"
+  if ! wait_ready "$p"; then printf 'Rapid-MLX failed; see %s\n' "$LOG_DIR/rapid-mlx.err.log" >&2; stop || true; return 1; fi
+  printf 'Rapid-MLX ready (PID %s)\n' "$p"
+}
+stop() {
+  p="$(server_pid || true)"
+  if [ -z "$p" ]; then [ -f "$PID_FILE" ] && rm -f "$PID_FILE"; printf 'Rapid-MLX is not running under local-agent\n'; return 0; fi
+  kill -TERM "$p"; i=0
+  while kill -0 "$p" 2>/dev/null && [ "$i" -lt 30 ]; do i=$((i + 1)); sleep 1; done
+  if kill -0 "$p" 2>/dev/null; then die "PID $p did not stop; refusing broad process cleanup"; fi
+  rm -f "$PID_FILE"; printf 'Stopped Rapid-MLX (PID %s)\n' "$p"
+}
+status() {
+  p="$(server_pid || true)"
+  state=stopped; [ -n "$p" ] && state=running
+  printf 'server      %s\n' "$state"
+  printf 'PID         %s\n' "${p:-—}"; printf 'model       %s\n' "$MODEL_REPO"; printf 'endpoint    %s\n' "$BASE_URL"
+  printf 'context     %s\n' "$CONTEXT"; printf 'max_output  %s\n' "$MAX_OUTPUT"
+  if [ -n "$p" ]; then rss="$(ps -p "$p" -o rss= 2>/dev/null | tr -d ' ' || true)"; [ -n "$rss" ] && printf 'memory      %s MiB RSS\n' "$((rss / 1024))" || printf 'memory      unavailable\n'; else printf 'memory      unavailable\n'; fi
+  if curl -fsS --max-time 2 "$BASE_URL/models" >/dev/null 2>&1; then printf 'health      healthy\n'; else printf 'health      unavailable\n'; fi
+}
+logs() { tail -n "${LOCAL_AGENT_LOG_LINES:-80}" "$LOG_DIR/rapid-mlx.log" "$LOG_DIR/rapid-mlx.err.log" 2>/dev/null || true; }
+bench() { exec "$ROOT/scripts/bench.sh"; }
+pi() { command -v pi >/dev/null 2>&1 || die "Pi is not on PATH; run ./install.sh"; exec pi --provider "$PI_PROVIDER" --model "$PI_PROVIDER/$MODEL_ID:off" "$@"; }
+health() { exec "$ROOT/scripts/health-check.sh" --restart; }
+help() {
+  cat <<'EOF'
+Usage: local-agent [command]
+
+With no command, start Rapid-MLX, open vanilla Pi, and stop the server when Pi exits.
+
+Commands:
+  help       Show this help.
+  status     Show server, model, endpoint, memory, and health.
+  logs       Show recent Rapid-MLX logs.
+  start      Start the server without opening Pi.
+  stop       Stop the server manually.
+  bench      Run the local benchmark.
+  health     Run the health check and restart test.
+  pi [args]  Open Pi without managing the server lifecycle.
+EOF
+}
+default() {
+  started_by_us=0
+  if ! server_pid >/dev/null 2>&1; then start; started_by_us=1; fi
+  command -v pi >/dev/null 2>&1 || die "Pi is not on PATH; run ./install.sh"
+  command pi --provider "$PI_PROVIDER" --model "$PI_PROVIDER/$MODEL_ID:off" "$@"
+  rc=$?
+  [ "$started_by_us" -eq 1 ] && stop >/dev/null
+  return "$rc"
+}
+
+case "${1:-}" in
+  '') default;;
+  help|-h|--help) help;;
+  start) start;; stop) stop;; status) status;; logs) logs;; bench) bench;; health|doctor) health;;
+  pi) shift; pi "$@";;
+  *) printf '%s\n' 'Usage: local-agent [start|stop|status|logs|bench|health|pi [args...]]' >&2; exit 2;;
+esac
