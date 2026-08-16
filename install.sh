@@ -17,11 +17,13 @@ command -v curl >/dev/null 2>&1 || die 'curl is required.'
 if brew list --formula rapid-mlx >/dev/null 2>&1; then brew upgrade rapid-mlx >/dev/null 2>&1 || true; else brew install rapid-mlx; fi
 npm_rapid="$(command -v rapid-mlx 2>/dev/null || true)"
 case "$npm_rapid" in "$HOME/.local/bin/rapid-mlx") uv tool uninstall rapid-mlx >/dev/null 2>&1 || true;; esac
-npm list --global --depth=0 @earendil-works/pi-coding-agent >/dev/null 2>&1 && npm uninstall --global @earendil-works/pi-coding-agent >/dev/null || true
+npm list --global --depth=0 @mariozechner/pi-coding-agent >/dev/null 2>&1 && npm uninstall --global @mariozechner/pi-coding-agent >/dev/null || true
 npm uninstall --global little-coder >/dev/null 2>&1 || true
-npm install --global @mariozechner/pi-coding-agent@latest >/dev/null
-command -v rapid-mlx >/dev/null 2>&1 || die 'Rapid-MLX installation did not provide rapid-mlx'
+npm install --global @earendil-works/pi-coding-agent@latest >/dev/null
 command -v pi >/dev/null 2>&1 || die 'Pi installation did not provide pi'
+PI_ADAPTIVE_THINKING_VERSION="${PI_ADAPTIVE_THINKING_VERSION:-0.2.0}"
+pi install "npm:pi-adaptive-thinking@$PI_ADAPTIVE_THINKING_VERSION" >/dev/null
+command -v rapid-mlx >/dev/null 2>&1 || die 'Rapid-MLX installation did not provide rapid-mlx'
 
 printf 'Downloading/checking model %s\n' "$MODEL_REPO"
 RAPID_MLX_BIN="$(brew --prefix rapid-mlx)/bin/rapid-mlx"; export RAPID_MLX_BIN
@@ -54,7 +56,7 @@ if [ -f "$legacy_little" ] && [ -f "$legacy_little.pre-local-agentic-dev" ]; the
   printf 'Removed obsolete Little Coder provider config\n'
 fi
 
-PI_AGENT_DIR="$PI_AGENT_DIR" BASE_URL="$BASE_URL" MODEL_ID="$MODEL_ID" MODEL_REPO="$MODEL_REPO" CONTEXT="$CONTEXT" MAX_OUTPUT="$MAX_OUTPUT" PI_PROVIDER="$PI_PROVIDER" node <<'NODE'
+PI_AGENT_DIR="$PI_AGENT_DIR" BASE_URL="$BASE_URL" MODEL_ID="$MODEL_ID" MODEL_REPO="$MODEL_REPO" CONTEXT="$CONTEXT" MAX_OUTPUT="$MAX_OUTPUT" PI_PROVIDER="$PI_PROVIDER" PI_THINKING_LEVEL="$PI_THINKING_LEVEL" node <<'NODE'
 const fs = require('fs');
 const path = require('path');
 const env = process.env;
@@ -64,7 +66,8 @@ const dir = env.PI_AGENT_DIR, modelsFile = path.join(dir, 'models.json'), settin
 const models = read(modelsFile, {}); models.providers ??= {};
 models.providers[env.PI_PROVIDER] = { ...(models.providers[env.PI_PROVIDER] ?? {}), api: 'openai-completions', baseUrl: env.BASE_URL, apiKey: 'local', models: [{ id: env.MODEL_ID, name: env.MODEL_REPO, reasoning: true, input: ['text'], contextWindow: Number(env.CONTEXT), maxTokens: Number(env.MAX_OUTPUT), cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] };
 atomic(modelsFile, models);
-const settings = read(settingsFile, {}); settings.defaultProvider = env.PI_PROVIDER; settings.defaultModel = env.MODEL_ID; settings.defaultThinkingLevel = 'off'; atomic(settingsFile, settings);
+const settings = read(settingsFile, {}); settings.defaultProvider = env.PI_PROVIDER; settings.defaultModel = env.MODEL_ID; settings.defaultThinkingLevel = env.PI_THINKING_LEVEL; settings.quietStartup ??= true; atomic(settingsFile, settings);
+const adaptiveFile = path.join(dir, 'adaptive-thinking.json'); const adaptive = read(adaptiveFile, {}); adaptive.enabled ??= true; adaptive.quiet ??= false; atomic(adaptiveFile, adaptive);
 NODE
 
 cleanup_legacy() {
@@ -82,4 +85,5 @@ chmod +x "$ROOT/bin/local-agent" "$ROOT/scripts/health-check.sh" "$ROOT/scripts/
 PATH="$HOME/.local/bin:$PATH"; export PATH
 "$HOME/.local/bin/local-agent" start
 "$ROOT/scripts/health-check.sh" --restart
+"$HOME/.local/bin/local-agent" stop >/dev/null
 printf '\nInstalled. Ensure ~/.local/bin is on PATH, then use: local-agent status\n'

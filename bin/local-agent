@@ -57,7 +57,10 @@ start() {
   metal_preflight "$rapid" || return 1
   printf 'Starting %s on %s (model load may take a while)\n' "$MODEL_REPO" "$BASE_URL"
   nohup "$rapid" serve "$MODEL_REPO" --served-model-name "$MODEL_ID" \
-    --host "$HOST" --port "$PORT" --max-num-seqs 1 --max-concurrent-requests 1 \
+    --host "$HOST" --port "$PORT" --log-level "$LOG_LEVEL" \
+    --max-num-seqs "$MAX_NUM_SEQS" --max-concurrent-requests "$MAX_CONCURRENT_REQUESTS" \
+    --prefill-batch-size "$PREFILL_BATCH_SIZE" --completion-batch-size "$COMPLETION_BATCH_SIZE" \
+    --enable-prefix-cache --timeout "$REQUEST_TIMEOUT" --max-request-bytes "$MAX_REQUEST_BYTES" \
     --enable-auto-tool-choice --tool-call-parser "$TOOL_CALL_PARSER" \
     --reasoning-parser "$REASONING_PARSER" --max-tokens "$MAX_OUTPUT" \
     >"$LOG_DIR/rapid-mlx.log" 2>"$LOG_DIR/rapid-mlx.err.log" &
@@ -79,12 +82,15 @@ status() {
   printf 'server      %s\n' "$state"
   printf 'PID         %s\n' "${p:-—}"; printf 'model       %s\n' "$MODEL_REPO"; printf 'endpoint    %s\n' "$BASE_URL"
   printf 'context     %s\n' "$CONTEXT"; printf 'max_output  %s\n' "$MAX_OUTPUT"
+  printf 'thinking    %s\n' "$PI_THINKING_LEVEL"
+  printf 'sequences   %s\n' "$MAX_NUM_SEQS"; printf 'admission   %s\n' "$MAX_CONCURRENT_REQUESTS"
+  printf 'timeout     %ss\n' "$REQUEST_TIMEOUT"; printf 'request_max %s MiB\n' "$((MAX_REQUEST_BYTES / 1048576))"
   if [ -n "$p" ]; then rss="$(ps -p "$p" -o rss= 2>/dev/null | tr -d ' ' || true)"; [ -n "$rss" ] && printf 'memory      %s MiB RSS\n' "$((rss / 1024))" || printf 'memory      unavailable\n'; else printf 'memory      unavailable\n'; fi
   if curl -fsS --max-time 2 "$BASE_URL/models" >/dev/null 2>&1; then printf 'health      healthy\n'; else printf 'health      unavailable\n'; fi
 }
 logs() { tail -n "${LOCAL_AGENT_LOG_LINES:-80}" "$LOG_DIR/rapid-mlx.log" "$LOG_DIR/rapid-mlx.err.log" 2>/dev/null || true; }
 bench() { exec "$ROOT/scripts/bench.sh"; }
-pi() { command -v pi >/dev/null 2>&1 || die "Pi is not on PATH; run ./install.sh"; exec pi --provider "$PI_PROVIDER" --model "$PI_PROVIDER/$MODEL_ID:off" "$@"; }
+pi() { command -v pi >/dev/null 2>&1 || die "Pi is not on PATH; run ./install.sh"; exec pi --provider "$PI_PROVIDER" --model "$PI_PROVIDER/$MODEL_ID:$PI_THINKING_LEVEL" "$@"; }
 health() { exec "$ROOT/scripts/health-check.sh" --restart; }
 help() {
   cat <<'EOF'
@@ -105,10 +111,21 @@ EOF
 }
 default() {
   started_by_us=0
-  if ! server_pid >/dev/null 2>&1; then start; started_by_us=1; fi
+  cleanup_started_server() {
+    rc="$1"
+    trap - EXIT HUP INT TERM
+    [ "$started_by_us" -eq 1 ] && stop >/dev/null 2>&1 || true
+    return "$rc"
+  }
+  trap 'rc=$?; cleanup_started_server "$rc"' EXIT
+  trap 'cleanup_started_server 129; exit 129' HUP
+  trap 'cleanup_started_server 130; exit 130' INT
+  trap 'cleanup_started_server 143; exit 143' TERM
+  if ! server_pid >/dev/null 2>&1; then started_by_us=1; start; fi
   command -v pi >/dev/null 2>&1 || die "Pi is not on PATH; run ./install.sh"
-  command pi --provider "$PI_PROVIDER" --model "$PI_PROVIDER/$MODEL_ID:off" "$@"
+  command pi --provider "$PI_PROVIDER" --model "$PI_PROVIDER/$MODEL_ID:$PI_THINKING_LEVEL" "$@"
   rc=$?
+  trap - EXIT HUP INT TERM
   [ "$started_by_us" -eq 1 ] && stop >/dev/null
   return "$rc"
 }
