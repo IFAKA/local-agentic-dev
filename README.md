@@ -64,3 +64,11 @@ Run the installer again:
 ```
 
 This removes project configuration and runtime state, restores Pi backups, and preserves downloaded models and installed packages.
+
+---
+
+## Support
+
+If this project is useful to you, you can support my work:
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/zfaka)
